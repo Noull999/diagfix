@@ -13,6 +13,7 @@ Se activa solo si no hay navegador disponible (detecta WinPE).
 import ctypes
 import os
 import platform
+import subprocess
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -533,7 +534,28 @@ def index():
 
 
 def _open_browser():
-    webbrowser.open("http://127.0.0.1:8000")
+    """Abre el panel en una ventana de Edge/Chrome en modo `--app` (sin barra
+    de direcciones ni pestañas — se ve como una aplicación propia, no como
+    "alguien abrió el navegador"), con flags que saltan el asistente de
+    bienvenida/términos y el aviso de "hacer default" que de otro modo
+    aparecen la primera vez que se usa ese navegador en una cuenta de
+    Windows recién iniciada. Si no encuentra un navegador Chromium instalado,
+    cae al navegador predeterminado normal (webbrowser.open)."""
+    url = "http://127.0.0.1:8000"
+    candidatos = [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Microsoft/Edge/Application/msedge.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Microsoft/Edge/Application/msedge.exe",
+        Path(os.environ.get("PROGRAMFILES", "")) / "Google/Chrome/Application/chrome.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google/Chrome/Application/chrome.exe",
+    ]
+    exe = next((c for c in candidatos if c.exists()), None)
+    if exe:
+        try:
+            subprocess.Popen([str(exe), f"--app={url}", "--no-first-run", "--no-default-browser-check"])
+            return
+        except OSError:
+            pass
+    webbrowser.open(url)
 
 
 if __name__ == "__main__":
