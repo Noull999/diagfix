@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=29" />
+<link rel="stylesheet" href="/static/style.css?v=30" />
 </head>
 <body>
   <header class="topbar">
@@ -17,9 +17,16 @@
     </div>
     <div class="topbar-actions">
       <span id="admin-badge" class="badge badge-unknown">Verificando permisos…</span>
+      <button id="power-restart-btn" class="btn btn-ghost btn-small" title="Reiniciar equipo">⟲ Reiniciar</button>
+      <button id="power-shutdown-btn" class="btn btn-ghost btn-small" title="Apagar equipo">⏻ Apagar</button>
       <button id="scan-btn" class="btn btn-primary">Ejecutar diagnóstico</button>
     </div>
   </header>
+
+  <div id="power-countdown" class="power-countdown" hidden>
+    <span id="power-countdown-text"></span>
+    <button id="power-cancel-btn" class="btn btn-danger btn-small">Cancelar</button>
+  </div>
 
   <div class="app-shell">
     <nav class="sidebar" aria-label="Secciones de DiagFix">
@@ -225,19 +232,6 @@
           <button id="sfc-btn" class="btn btn-ghost">Verificación profunda de archivos del sistema (sfc)</button>
           <span id="sfc-status" class="status-text"></span>
         </section>
-
-        <section class="card">
-          <div class="card-header"><h2 class="card-title">Energía</h2></div>
-          <p class="card-desc">Cierra programas sin guardar. Da unos segundos de margen para cancelar antes de que se aplique de verdad.</p>
-          <div class="test-actions-row">
-            <button id="power-restart-btn" class="btn btn-ghost btn-small">Reiniciar equipo</button>
-            <button id="power-shutdown-btn" class="btn btn-ghost btn-small">Apagar equipo</button>
-          </div>
-          <div id="power-countdown" class="power-countdown" hidden>
-            <span id="power-countdown-text"></span>
-            <button id="power-cancel-btn" class="btn btn-danger btn-small">Cancelar</button>
-          </div>
-        </section>
       </div>
 
       <!-- ============================== SCRIPTS ============================== -->
@@ -417,6 +411,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=29"></script>
+  <script src="/static/script.js?v=30"></script>
 </body>
 </html>
