@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=26" />
+<link rel="stylesheet" href="/static/style.css?v=27" />
 </head>
 <body>
   <header class="topbar">
@@ -262,6 +262,16 @@
           </div>
           <span id="drivers-status" class="status-text"></span>
         </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Actualizar DiagFix</h2>
+            <button id="update-check-btn" class="btn btn-ghost btn-small">Buscar actualizaciones</button>
+          </div>
+          <p class="card-desc">Descarga la última versión publicada en GitHub, sin tener que recibir un .exe nuevo a mano cada vez.</p>
+          <div id="update-info"></div>
+          <span id="update-status" class="status-text"></span>
+        </section>
       </div>
 
       <!-- ============================== REPORTES ============================== -->
@@ -329,6 +339,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=26"></script>
+  <script src="/static/script.js?v=27"></script>
 </body>
 </html>

@@ -1375,6 +1375,54 @@ function exportReport() {
   URL.revokeObjectURL(url);
 }
 
+async function checkForUpdate() {
+  const info = document.getElementById("update-info");
+  const status = document.getElementById("update-status");
+  info.innerHTML = "";
+  status.textContent = "Buscando…";
+  try {
+    const res = await fetch("/api/update/check");
+    const data = await res.json();
+    if (!data.available) {
+      status.textContent = data.reason || "No se pudo buscar actualizaciones.";
+      return;
+    }
+    status.textContent = "";
+    if (!data.update_available) {
+      info.textContent = `Ya tenés la última versión (${data.current_version}).`;
+      return;
+    }
+    const p = document.createElement("p");
+    p.className = "card-desc";
+    p.style.margin = "0 0 10px";
+    p.textContent = `Versión actual: ${data.current_version} → nueva: ${data.latest_version}`;
+    const btn = document.createElement("button");
+    btn.className = "btn btn-ghost btn-small";
+    btn.textContent = "Descargar e instalar";
+    btn.addEventListener("click", () => applyUpdate(data.latest_version));
+    info.appendChild(p);
+    info.appendChild(btn);
+  } catch (e) {
+    status.textContent = "No se pudo conectar con la app.";
+  }
+}
+
+async function applyUpdate(version) {
+  if (!window.confirm(`¿Descargar e instalar la versión ${version}? La aplicación se va a cerrar y reabrir sola.`)) return;
+  const status = document.getElementById("update-status");
+  status.textContent = "Descargando…";
+  try {
+    const res = await fetch("/api/update/apply", { method: "POST" });
+    const data = await res.json();
+    status.textContent = data.output || (data.status === "ok" ? "Actualizando…" : "No se pudo actualizar.");
+  } catch (e) {
+    // Si la actualización ya arrancó, el cierre del proceso puede cortar
+    // esta misma petición antes de que llegue la respuesta — no es un error.
+    status.textContent = "Actualizando y reiniciando la aplicación…";
+  }
+}
+
+document.getElementById("update-check-btn").addEventListener("click", checkForUpdate);
 document.getElementById("scan-btn").addEventListener("click", runScan);
 document.getElementById("monitor-btn").addEventListener("click", startMonitor);
 document.getElementById("save-history-btn").addEventListener("click", saveToHistory);

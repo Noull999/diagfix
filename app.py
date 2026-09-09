@@ -11,6 +11,7 @@ equipo recién formateado — Shift+F10 durante la instalación de Windows):
 Se activa solo si no hay navegador disponible (detecta WinPE).
 """
 import ctypes
+import os
 import platform
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
@@ -23,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from checks import actions, correlate, disk_actions, disks, history, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, win11_readiness
+from checks import actions, correlate, disk_actions, disks, history, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, updater, win11_readiness
 from checks import system_info as system_info_check
 
 BASE_DIR = Path(__file__).parent
@@ -76,6 +77,37 @@ def identity():
 @app.get("/api/win11-readiness")
 def win11_readiness_endpoint():
     return win11_readiness.check_windows11_readiness()
+
+
+@app.get("/api/update/check")
+def update_check():
+    return updater.check_for_update()
+
+
+@app.post("/api/update/apply")
+def update_apply(request: Request):
+    # Cambia el propio .exe en disco: mismo chequeo de Host que el resto de
+    # las rutas mutables, para que una página abierta en el navegador no
+    # pueda dispararlo sola.
+    if not _same_origin(request):
+        return JSONResponse(status_code=403, content={"status": "error", "output": "Origen no permitido."})
+
+    # El download_url se vuelve a pedir a GitHub acá adentro (fuente
+    # confiable) en vez de aceptar uno que mande el cliente — así no se
+    # puede usar este endpoint para hacer descargar cualquier URL.
+    info = updater.check_for_update()
+    if not info.get("available") or not info.get("update_available"):
+        return {"status": "error", "output": "No hay una actualización disponible para aplicar."}
+
+    try:
+        updater.apply_update(info["download_url"])
+    except Exception as exc:
+        return {"status": "error", "output": str(exc)}
+
+    # Da tiempo a que la respuesta HTTP llegue al navegador antes de cerrar
+    # el proceso (Windows tiene el .exe bloqueado mientras esté corriendo).
+    Timer(1.5, lambda: os._exit(0)).start()
+    return {"status": "ok", "output": f"Descargando la versión {info['latest_version']}. La aplicación se va a cerrar y reabrir sola en un momento."}
 
 
 @app.get("/api/scan")
