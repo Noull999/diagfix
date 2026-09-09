@@ -34,7 +34,56 @@ $fw = Get-NetFirewallProfile -ErrorAction SilentlyContinue
 } | ConvertTo-Json -Compress
 """.strip()
 
-_DEVICES_SCRIPT = "Get-PnpDevice -Status Error -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FriendlyName"
+_DEVICES_SCRIPT = r"""
+Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+    Where-Object { $_.ConfigManagerErrorCode -and $_.ConfigManagerErrorCode -ne 0 } |
+    Select-Object Name, ConfigManagerErrorCode |
+    ConvertTo-Json -Compress
+""".strip()
+
+# Códigos de Win32_PnPEntity.ConfigManagerErrorCode — estables desde Windows
+# XP, documentados por Microsoft (CM_PROB_* en cfgmgr32.h). Dan el motivo real
+# en vez de solo el nombre del dispositivo fallado.
+_DEVICE_ERROR_LABELS = {
+    1: "no está configurado correctamente",
+    3: "el driver puede estar dañado, o falta memoria/recursos del sistema",
+    9: "el firmware no entrega la información de recursos correcta",
+    10: "no puede iniciar",
+    12: "no hay suficientes recursos libres (IRQ/memoria) para usarlo",
+    14: "necesita que reinicies el equipo para terminar de configurarse",
+    16: "Windows no pudo identificar todos sus recursos",
+    18: "hay que reinstalar los drivers",
+    19: "la configuración en el registro está dañada o incompleta",
+    21: "Windows lo está quitando (reinicia el equipo)",
+    22: "está deshabilitado",
+    24: "no está presente, no funciona, o le faltan drivers",
+    28: "no tiene los drivers instalados",
+    29: "está deshabilitado por el firmware/BIOS",
+    31: "no está funcionando correctamente (drivers faltantes)",
+    32: "el servicio asociado está deshabilitado",
+    33: "Windows no puede determinar qué recursos necesita",
+    34: "hay que configurar sus recursos manualmente",
+    35: "el firmware no da suficiente información sobre este dispositivo",
+    36: "requiere una interrupción (IRQ) que no está disponible",
+    37: "el driver devolvió un error al cargar",
+    38: "no se pudo cargar el driver (ya hay una versión anterior en memoria)",
+    39: "el driver falta o está dañado",
+    40: "falta o está incorrecta la información del servicio en el registro",
+    41: "el driver cargó pero no encontró el dispositivo (¿se desconectó?)",
+    42: "hay un dispositivo duplicado",
+    43: "el propio driver reportó una falla del dispositivo",
+    44: "una aplicación o servicio lo apagó",
+    45: "el dispositivo se desconectó (ya no está presente)",
+    47: "se puede quitar de forma segura, pero no se puede iniciar ahora",
+    48: "el driver está bloqueado por problemas conocidos",
+}
+
+
+def _device_error_detail(code):
+    label = _DEVICE_ERROR_LABELS.get(code)
+    if label:
+        return f"{label} (código {code})"
+    return f"código de error {code}"
 
 _SPOOLER_SCRIPT = "(Get-Service -Name Spooler -ErrorAction SilentlyContinue).Status"
 
@@ -281,23 +330,41 @@ def check_defender_firewall():
 
 
 def check_error_devices():
-    """Dispositivos con error en el Administrador de dispositivos (drivers
-    faltantes o con fallas)."""
+    """Dispositivos con error en el Administrador de dispositivos. A
+    diferencia de solo listar el nombre, acá se traduce el
+    ConfigManagerErrorCode (1-49, estable desde Windows XP) a texto — para
+    que diga "driver no instalado" en vez de dejar al técnico adivinar por
+    qué ese dispositivo en particular quedó marcado con la advertencia."""
     if platform.system() != "Windows":
         return _result("Dispositivos con error", "unknown", None, "Chequeo disponible solo en Windows.")
     output = _run_powershell(_DEVICES_SCRIPT, timeout=15)
     if output is None:
         return _result("Dispositivos con error", "unknown", None, "No se pudo consultar.")
-    names = [n.strip() for n in output.splitlines() if n.strip()]
-    if not names:
+    output = output.strip()
+    if not output:
+        return _result("Dispositivos con error", "ok", "0", "Ningún dispositivo reporta error.")
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return _result("Dispositivos con error", "unknown", None, "No se pudo interpretar la respuesta.")
+    if isinstance(data, dict):
+        data = [data]
+
+    detalles = []
+    for d in data:
+        nombre = (d.get("Name") or "Dispositivo desconocido").strip()
+        codigo = d.get("ConfigManagerErrorCode")
+        detalles.append(f"{nombre}: {_device_error_detail(codigo)}")
+    if not detalles:
         return _result("Dispositivos con error", "ok", "0", "Ningún dispositivo reporta error.")
     return _result(
-        "Dispositivos con error", "warning", ", ".join(names),
+        "Dispositivos con error", "warning", "; ".join(detalles),
         "Hay dispositivos con error en el Administrador de dispositivos.",
-        causes=["Driver faltante o incompatible", "Dispositivo defectuoso o mal conectado"],
+        causes=["Driver faltante, dañado o incompatible", "Dispositivo defectuoso o mal conectado", "El dispositivo está deshabilitado o su servicio no arranca"],
         fix=[
-            "Abre el Administrador de dispositivos (devmgmt.msc) y busca el ícono de advertencia amarillo.",
-            "Actualiza o reinstala el driver del dispositivo afectado desde el sitio del fabricante.",
+            "Abre el Administrador de dispositivos (devmgmt.msc) y busca el dispositivo por su nombre.",
+            "El detalle de este chequeo ya indica la causa más probable según el código de error de Windows.",
+            "Si dice 'faltan drivers', reinstala el driver desde el sitio del fabricante. Si dice 'deshabilitado', habilítalo con clic derecho > Habilitar dispositivo.",
         ],
     )
 

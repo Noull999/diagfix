@@ -14,6 +14,12 @@ function switchTab(tabId) {
     // No reinicia si ya hay un monitoreo en curso (evita perder el
     // historial acumulado si el técnico entra y sale de la pestaña).
     startMonitor();
+  } else if (tabId !== "tab-pruebas") {
+    // Cámara y micrófono quedan prendidos hasta que se apagan a mano — si
+    // el técnico cambia de pestaña sin detenerlos manualmente, se cortan
+    // solos para no dejar el micrófono/cámara activos de fondo.
+    stopMicTest();
+    stopCameraTest();
   }
 }
 
@@ -1421,6 +1427,227 @@ async function applyUpdate(version) {
     status.textContent = "Actualizando y reiniciando la aplicación…";
   }
 }
+
+// ============================== PRUEBAS ==============================
+// Tests manuales de hardware: no hay una fuente de datos por WMI para
+// confirmar que una tecla, botón, parlante, micrófono o cámara realmente
+// funcionan — el técnico tiene que probarlos él mismo, y esta sección le da
+// un lugar ordenado para hacerlo sin salir de la app.
+
+const KEYBOARD_LAYOUT = [
+  ["Escape", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"],
+  ["Backquote", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9", "Digit0", "Minus", "Equal", "Backspace"],
+  // Sin "Backslash": en el teclado ISO latinoamericano esa posición no
+  // existe como tecla separada — la ocupa el Enter, más alto y en forma de L.
+  ["Tab", "KeyQ", "KeyW", "KeyE", "KeyR", "KeyT", "KeyY", "KeyU", "KeyI", "KeyO", "KeyP", "BracketLeft", "BracketRight"],
+  ["CapsLock", "KeyA", "KeyS", "KeyD", "KeyF", "KeyG", "KeyH", "KeyJ", "KeyK", "KeyL", "Semicolon", "Quote", "Enter"],
+  ["ShiftLeft", "IntlBackslash", "KeyZ", "KeyX", "KeyC", "KeyV", "KeyB", "KeyN", "KeyM", "Comma", "Period", "Slash", "ShiftRight"],
+  ["ControlLeft", "MetaLeft", "AltLeft", "Space", "AltRight", "ControlRight", "ArrowLeft", "ArrowUp", "ArrowDown", "ArrowRight"],
+];
+// KeyboardEvent.code identifica la posición física de la tecla, no el
+// carácter impreso — por eso el mismo "Semicolon" es ";" en teclado US pero
+// "Ñ" en el teclado ISO latinoamericano que se usa en Chile. Los labels acá
+// reflejan lo que un técnico chileno ve impreso en su propio teclado.
+const KEY_LABELS = {
+  Escape: "Esc", Backquote: "|°", Minus: "'?", Equal: "¿¡", Backspace: "⌫",
+  Tab: "Tab", BracketLeft: "´", BracketRight: "+*",
+  CapsLock: "Caps", Semicolon: "Ñ", Quote: "{[", Enter: "Enter",
+  ShiftLeft: "Shift", ShiftRight: "Shift", IntlBackslash: "<>", Comma: ",;", Period: ".:", Slash: "-_",
+  ControlLeft: "Ctrl", ControlRight: "Ctrl", MetaLeft: "Win", AltLeft: "Alt", AltRight: "Alt Gr",
+  Space: "␣", ArrowLeft: "←", ArrowUp: "↑", ArrowDown: "↓", ArrowRight: "→",
+};
+function keyLabel(code) {
+  if (KEY_LABELS[code]) return KEY_LABELS[code];
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (code.startsWith("Key")) return code.slice(3);
+  return code;
+}
+
+function buildKeyboardTest() {
+  const container = document.getElementById("test-keyboard");
+  container.innerHTML = "";
+  KEYBOARD_LAYOUT.forEach((row) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = "test-keyboard-row";
+    row.forEach((code) => {
+      const key = document.createElement("div");
+      key.className = "test-key";
+      key.dataset.code = code;
+      key.textContent = keyLabel(code);
+      rowEl.appendChild(key);
+    });
+    container.appendChild(rowEl);
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  if (document.getElementById("tab-pruebas").hidden) return;
+  const key = document.querySelector(`#test-keyboard .test-key[data-code="${e.code}"]`);
+  if (key) {
+    e.preventDefault();
+    key.classList.add("pressed");
+  }
+});
+
+document.getElementById("test-keyboard-reset").addEventListener("click", () => {
+  document.querySelectorAll("#test-keyboard .test-key.pressed").forEach((k) => k.classList.remove("pressed"));
+});
+
+// ---- Mouse ----
+document.querySelectorAll(".test-mouse-zone").forEach((zone) => {
+  zone.addEventListener("mousedown", (e) => {
+    const want = zone.dataset.btn;
+    const clicked = e.button === 0 ? "left" : e.button === 1 ? "middle" : e.button === 2 ? "right" : null;
+    if (clicked === want) zone.classList.add("hit");
+  });
+  zone.addEventListener("contextmenu", (e) => e.preventDefault());
+  zone.addEventListener("wheel", (e) => {
+    const want = zone.dataset.btn;
+    if ((e.deltaY < 0 && want === "scrollup") || (e.deltaY > 0 && want === "scrolldown")) {
+      zone.classList.add("hit");
+    }
+  });
+});
+document.getElementById("test-mouse-reset").addEventListener("click", () => {
+  document.querySelectorAll(".test-mouse-zone.hit").forEach((z) => z.classList.remove("hit"));
+});
+
+// ---- Parlantes ----
+function playSpeakerTest(channel) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  const panner = ctx.createStereoPanner();
+  const gain = ctx.createGain();
+  osc.frequency.value = 440;
+  panner.pan.value = channel === "left" ? -1 : channel === "right" ? 1 : 0;
+  gain.gain.value = 0.25;
+  osc.connect(gain).connect(panner).connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.6);
+  osc.onended = () => ctx.close();
+}
+document.querySelectorAll("[data-speaker]").forEach((btn) => {
+  btn.addEventListener("click", () => playSpeakerTest(btn.dataset.speaker));
+});
+
+// ---- Micrófono ----
+let micStream = null;
+let micAnimationId = null;
+
+async function startMicTest() {
+  const status = document.getElementById("test-mic-status");
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    status.textContent = "No se pudo acceder al micrófono (¿permiso denegado o no hay uno conectado?).";
+    return;
+  }
+  status.textContent = "Escuchando…";
+  document.getElementById("test-mic-btn").textContent = "Detener prueba";
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = ctx.createMediaStreamSource(micStream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  const bar = document.getElementById("test-mic-level");
+  function tick() {
+    analyser.getByteFrequencyData(data);
+    const avg = data.reduce((a, b) => a + b, 0) / data.length;
+    bar.style.width = `${Math.min(100, Math.round((avg / 255) * 220))}%`;
+    micAnimationId = requestAnimationFrame(tick);
+  }
+  tick();
+  micStream._audioCtx = ctx;
+}
+
+function stopMicTest() {
+  if (micAnimationId) cancelAnimationFrame(micAnimationId);
+  micAnimationId = null;
+  if (micStream) {
+    micStream.getTracks().forEach((t) => t.stop());
+    if (micStream._audioCtx) micStream._audioCtx.close();
+    micStream = null;
+  }
+  document.getElementById("test-mic-level").style.width = "0%";
+  document.getElementById("test-mic-status").textContent = "";
+  document.getElementById("test-mic-btn").textContent = "Iniciar prueba";
+}
+
+document.getElementById("test-mic-btn").addEventListener("click", () => {
+  if (micStream) stopMicTest();
+  else startMicTest();
+});
+
+// ---- Cámara ----
+let cameraStream = null;
+
+async function startCameraTest() {
+  const status = document.getElementById("test-camera-status");
+  const video = document.getElementById("test-camera-video");
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+  } catch (e) {
+    status.textContent = "No se pudo acceder a la cámara (¿permiso denegado o no hay una conectada?).";
+    return;
+  }
+  video.srcObject = cameraStream;
+  video.hidden = false;
+  status.textContent = "";
+  document.getElementById("test-camera-btn").textContent = "Detener prueba";
+}
+
+function stopCameraTest() {
+  const video = document.getElementById("test-camera-video");
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    cameraStream = null;
+  }
+  video.srcObject = null;
+  video.hidden = true;
+  document.getElementById("test-camera-status").textContent = "";
+  document.getElementById("test-camera-btn").textContent = "Iniciar prueba";
+}
+
+document.getElementById("test-camera-btn").addEventListener("click", () => {
+  if (cameraStream) stopCameraTest();
+  else startCameraTest();
+});
+
+// ---- Pantalla (píxeles muertos) ----
+const SCREEN_TEST_COLORS = ["#ff0000", "#00ff00", "#0000ff", "#ffffff", "#000000"];
+let screenTestIndex = 0;
+
+function showScreenTestColor() {
+  document.getElementById("test-screen-overlay").style.background = SCREEN_TEST_COLORS[screenTestIndex];
+}
+function advanceScreenTest() {
+  screenTestIndex++;
+  if (screenTestIndex >= SCREEN_TEST_COLORS.length) {
+    closeScreenTest();
+    return;
+  }
+  showScreenTestColor();
+}
+function closeScreenTest() {
+  document.getElementById("test-screen-overlay").hidden = true;
+  document.removeEventListener("keydown", handleScreenTestKey);
+}
+function handleScreenTestKey(e) {
+  if (e.key === "Escape") closeScreenTest();
+  else advanceScreenTest();
+}
+document.getElementById("test-screen-overlay").addEventListener("click", advanceScreenTest);
+
+document.getElementById("test-screen-btn").addEventListener("click", () => {
+  screenTestIndex = 0;
+  document.getElementById("test-screen-overlay").hidden = false;
+  showScreenTestColor();
+  document.removeEventListener("keydown", handleScreenTestKey);
+  document.addEventListener("keydown", handleScreenTestKey);
+});
+
+buildKeyboardTest();
 
 document.getElementById("update-check-btn").addEventListener("click", checkForUpdate);
 document.getElementById("scan-btn").addEventListener("click", runScan);
