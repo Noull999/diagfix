@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=31" />
+<link rel="stylesheet" href="/static/style.css?v=33" />
 </head>
 <body>
   <header class="topbar">
@@ -392,8 +392,9 @@
         <section class="card">
           <div class="card-header">
             <h2 class="card-title">Inventario de equipos</h2>
-            <button id="inventory-view-btn" class="btn btn-ghost btn-small">Ver inventario</button>
-            <a id="inventory-export-link" href="/api/inventory/export" class="btn btn-ghost btn-small">Descargar CSV</a>
+            <button id="inventory-view-btn" class="btn btn-ghost btn-small">Actualizar lista</button>
+            <button id="inventory-export-btn" class="btn btn-ghost btn-small">Descargar CSV</button>
+            <span id="inventory-status" class="status-text"></span>
           </div>
           <p class="card-desc">Cada escaneo guardado en el historial agrega una fila acá — una planilla acumulada de todas las visitas.</p>
           <div id="inventory-list" class="history-list" hidden></div>
@@ -406,6 +407,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=31"></script>
+  <script src="/static/script.js?v=33"></script>
 </body>
 </html>

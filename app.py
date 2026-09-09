@@ -397,13 +397,6 @@ def restore_point_create(payload: RestorePointRequest, request: Request):
         return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
 
 
-@app.get("/api/restore-points")
-def restore_points_list(request: Request):
-    if not _same_origin(request):
-        return JSONResponse([], status_code=403)
-    return restore.list_restore_points()
-
-
 @app.get("/api/scripts")
 def scripts_list(request: Request):
     if not _same_origin(request):
@@ -530,7 +523,14 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    # Sin caché: el HTML es lo único que no lleva `?v=` para invalidarlo, así
+    # que un index.html cacheado sigue pidiendo el CSS/JS viejo y la app
+    # queda en una versión anterior después de actualizarse. Es una carga
+    # local de 20 KB, no hay nada que ahorrar cacheándola.
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
 
 
 def _open_browser():

@@ -10,9 +10,12 @@ venv/
 .venv/
 
 # Datos locales generados en cada equipo donde corre DiagFix — nunca subir
-# historial, logs de acciones ni reportes de clientes reales.
+# historial, logs de acciones ni reportes de clientes reales. El inventario
+# en particular lleva nombre de cliente, ticket y número de serie de equipos
+# ajenos: en un repo público eso no puede salir nunca.
 *.db
 *.jsonl
+*.csv
 diagfix_settings.json
 reportes/
 

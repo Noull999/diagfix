@@ -6,6 +6,16 @@ function switchTab(tabId) {
     btn.classList.toggle("active", btn.dataset.tab === tabId);
   });
 
+  // Cámara y micrófono quedan prendidos hasta que se apagan a mano — si el
+  // técnico cambia de pestaña sin detenerlos, se cortan solos para no
+  // dejarlos activos de fondo. Va aparte de la carga automática de abajo:
+  // si fuera parte de la misma cadena if/else, salir de Pruebas hacia
+  // Discos o Monitoreo dejaría la cámara prendida.
+  if (tabId !== "tab-pruebas") {
+    stopMicTest();
+    stopCameraTest();
+  }
+
   // Algunas secciones se cargan solas al entrar, para no obligar a un clic
   // extra en algo que el técnico va a querer ver de inmediato.
   if (tabId === "tab-discos") {
@@ -14,12 +24,8 @@ function switchTab(tabId) {
     // No reinicia si ya hay un monitoreo en curso (evita perder el
     // historial acumulado si el técnico entra y sale de la pestaña).
     startMonitor();
-  } else if (tabId !== "tab-pruebas") {
-    // Cámara y micrófono quedan prendidos hasta que se apagan a mano — si
-    // el técnico cambia de pestaña sin detenerlos manualmente, se cortan
-    // solos para no dejar el micrófono/cámara activos de fondo.
-    stopMicTest();
-    stopCameraTest();
+  } else if (tabId === "tab-inventario") {
+    viewInventory();
   }
 }
 
@@ -1042,6 +1048,32 @@ async function exportSpecsPng() {
   }
 }
 
+async function exportInventoryCsv() {
+  // Antes era un <a href> directo al endpoint: si todavía no hay inventario,
+  // el 404 se abría como página JSON cruda, y en la ventana modo app (sin
+  // barra de direcciones ni botón atrás) el técnico quedaba atrapado ahí.
+  const status = document.getElementById("inventory-status");
+  status.textContent = "";
+  try {
+    const res = await fetch("/api/inventory/export");
+    if (!res.ok) {
+      status.textContent = res.status === 404
+        ? "Todavía no hay inventario: guardá al menos un escaneo en el historial."
+        : "No se pudo descargar el inventario.";
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "diagfix-inventario.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    status.textContent = "No se pudo conectar con la app.";
+  }
+}
+
 async function exportReportPng() {
   if (!lastScan) return;
   const meta = visitMeta();
@@ -1683,6 +1715,7 @@ document.getElementById("restore-point-btn").addEventListener("click", createRes
 document.getElementById("scripts-reload-btn").addEventListener("click", loadScripts);
 document.getElementById("export-png-btn").addEventListener("click", exportReportPng);
 document.getElementById("inventory-view-btn").addEventListener("click", viewInventory);
+document.getElementById("inventory-export-btn").addEventListener("click", exportInventoryCsv);
 document.getElementById("startup-reload-btn").addEventListener("click", loadStartupItems);
 document.getElementById("drivers-backup-btn").addEventListener("click", backupDrivers);
 document.getElementById("visit-technician").addEventListener("change", handleTechnicianChange);

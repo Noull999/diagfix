@@ -28,21 +28,3 @@ def create_restore_point(description: str = "DiagFix"):
             + " (Requiere permisos de administrador y que la Protección del sistema esté activada en la unidad C:.)"
         )
     return {"status": "ok", "message": "Punto de restauración creado."}
-
-
-def list_restore_points():
-    output = _run_powershell(
-        "Get-ComputerRestorePoint -ErrorAction SilentlyContinue | "
-        "Select-Object SequenceNumber, Description, CreationTime | ConvertTo-Json -Compress",
-        timeout=20,
-    )
-    if not output:
-        return []
-    import json
-    try:
-        data = json.loads(output)
-    except (json.JSONDecodeError, ValueError):
-        return []
-    if isinstance(data, dict):
-        data = [data]
-    return data
