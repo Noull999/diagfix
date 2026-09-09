@@ -117,7 +117,10 @@ async function loadActionsCatalog() {
 
     const panel = document.getElementById("quick-actions");
     panel.innerHTML = "";
-    list.forEach((a) => {
+    // Apagar/reiniciar tienen su propia tarjeta con confirmación reforzada y
+    // cuenta regresiva cancelable — no van mezclados en la grilla genérica.
+    const POWER_ACTION_IDS = ["restart_pc", "shutdown_pc", "cancel_power_action"];
+    list.filter((a) => !POWER_ACTION_IDS.includes(a.id)).forEach((a) => {
       const item = document.createElement("div");
       item.className = "quick-action";
 
@@ -1648,6 +1651,61 @@ document.getElementById("test-screen-btn").addEventListener("click", () => {
 });
 
 buildKeyboardTest();
+
+// ---- Energía (apagar/reiniciar) ----
+let powerCountdownInterval = null;
+
+function startPowerCountdown(seconds) {
+  const wrap = document.getElementById("power-countdown");
+  const text = document.getElementById("power-countdown-text");
+  let remaining = seconds;
+  wrap.hidden = false;
+  text.textContent = `Se aplica en ${remaining}s…`;
+  clearInterval(powerCountdownInterval);
+  powerCountdownInterval = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(powerCountdownInterval);
+      wrap.hidden = true;
+      return;
+    }
+    text.textContent = `Se aplica en ${remaining}s…`;
+  }, 1000);
+}
+
+async function triggerPowerAction(actionId, confirmMsg, countdownSeconds) {
+  if (!window.confirm(confirmMsg)) return;
+  try {
+    const res = await fetch(`/api/actions/${actionId}`, { method: "POST" });
+    const data = await res.json();
+    if (data.status === "ok") startPowerCountdown(countdownSeconds);
+  } catch (e) {
+    // Si el equipo ya empezó a apagarse, esta misma petición puede cortarse
+    // antes de recibir respuesta — no tratarlo como un error real.
+  }
+}
+
+document.getElementById("power-restart-btn").addEventListener("click", () => {
+  triggerPowerAction(
+    "restart_pc",
+    "¿Reiniciar este equipo? Se cierran los programas abiertos sin guardar. Vas a tener unos segundos para cancelar.",
+    20,
+  );
+});
+document.getElementById("power-shutdown-btn").addEventListener("click", () => {
+  triggerPowerAction(
+    "shutdown_pc",
+    "¿Apagar este equipo? Se cierran los programas abiertos sin guardar. Vas a tener unos segundos para cancelar.",
+    20,
+  );
+});
+document.getElementById("power-cancel-btn").addEventListener("click", async () => {
+  clearInterval(powerCountdownInterval);
+  document.getElementById("power-countdown").hidden = true;
+  try {
+    await fetch("/api/actions/cancel_power_action", { method: "POST" });
+  } catch (e) {}
+});
 
 document.getElementById("update-check-btn").addEventListener("click", checkForUpdate);
 document.getElementById("scan-btn").addEventListener("click", runScan);
