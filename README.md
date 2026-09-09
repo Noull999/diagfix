@@ -1,12 +1,41 @@
 # DiagFix
 
-Panel local de diagnóstico técnico para soporte en Windows. En vez de tirar el
-output crudo de `ping`, `wmic`, `Get-WinEvent`, etc., cada chequeo se
-interpreta con umbrales de severidad y devuelve un veredicto (`ok` /
-`warning` / `critical`) más causas y una solución concreta — muchas con un
-botón para aplicarla directamente. Además identifica el equipo, correlaciona
-señales para sugerir una causa raíz probable, permite monitorear en vivo por
-60 segundos y guarda un historial por equipo entre visitas.
+Panel local de diagnóstico y soporte técnico para Windows. Se corre en el
+equipo de un cliente, escanea red/hardware/software en unos segundos e
+interpreta cada resultado con un veredicto (`ok` / `warning` / `critical`)
+más causas probables y una solución concreta — muchas con un botón para
+aplicarla directamente ahí mismo, sin salir de la app ni copiar comandos a
+mano.
+
+No es un visor de logs crudos: en vez de mostrarte el output de `ping`,
+`wmic` o `Get-WinEvent`, cada chequeo ya viene traducido a algo que se
+entiende de un vistazo, para que en una visita de soporte se vaya directo a
+lo que importa.
+
+## Qué hace, en corto
+
+- **Diagnostica** 24+ chequeos de red, hardware y software con severidad,
+  causas y solución sugerida.
+- **Identifica el equipo**: marca, modelo, número de serie, RAM por módulo,
+  discos, GPU, monitores/USB/impresoras, activación de Windows, y si el
+  equipo es apto para actualizar a Windows 11.
+- **Corrige con un clic**: 24 acciones (limpiar DNS, reparar Windows Update,
+  vaciar cola de impresión, sincronizar hora, etc.), cada una con
+  confirmación y registro de auditoría.
+- **Prueba hardware a mano**: teclado, mouse, parlantes, micrófono, cámara y
+  píxeles muertos de pantalla — para lo que ninguna consulta de Windows
+  puede confirmar por sí sola.
+- **Administra discos**: formatear, crear/eliminar particiones, con el disco
+  del sistema bloqueado a nivel de servidor (no solo en la interfaz).
+- **Monitorea en vivo** 60 segundos para fallas intermitentes que un
+  escaneo puntual no capta.
+- **Guarda historial** por equipo (SQLite + CSV acumulado) para comparar
+  entre visitas, con reportes exportables a `.html`/`.png`.
+- **Se actualiza sola** desde este mismo repo de GitHub, sin depender de que
+  alguien te pase el `.exe` a mano cada vez.
+- **Arranca sin navegador visible**: abre en una ventana propia (modo app),
+  y también tiene un modo consola de puro texto para usar durante la
+  instalación de Windows (Shift+F10), antes de que exista un navegador.
 
 ## Requisitos
 
@@ -33,30 +62,40 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Se abre automáticamente `http://127.0.0.1:8000` en el navegador con el
-dashboard. El botón **Ejecutar diagnóstico** corre los 21 chequeos rápidos
-(unos segundos, corren en paralelo). **Verificación profunda (sfc)** ejecuta
-`sfc /scannow`, que puede tardar varios minutos — úsalo solo cuando ya
-sospechas de archivos de sistema corruptos.
+Se abre automáticamente el dashboard en una ventana propia (ver
+[Cómo abre la app](#cómo-abre-la-app)). El botón **Ejecutar diagnóstico**
+corre los chequeos rápidos (unos segundos, corren en paralelo).
+**Verificación profunda (sfc)** ejecuta `sfc /scannow`, que puede tardar
+varios minutos — úsalo solo cuando ya sospechas de archivos de sistema
+corruptos.
 
 ## Qué revisa
 
 | Categoría | Chequeos |
 |---|---|
-| Red | Internet, DNS, puerta de enlace, señal Wi-Fi, DNS/proxy/VPN configurados |
+| Red | Internet, DNS, puerta de enlace, señal Wi-Fi, DNS/proxy/VPN configurados, velocidad del enlace (cable/Wi-Fi), perfil de red (Público/Privado), velocidad de descarga real |
 | Hardware | Espacio en disco, salud operacional y S.M.A.R.T. real del disco, RAM, CPU, salud de batería |
-| Software | Reinicio pendiente, últimas actualizaciones, errores del Visor de Eventos, programas de inicio, pantallazos azules/reinicios inesperados, Defender + Firewall, dispositivos con error, servicio de impresión, BitLocker, sincronización de hora |
+| Software | Reinicio pendiente, últimas actualizaciones, errores del Visor de Eventos, programas de inicio, pantallazos azules/reinicios inesperados, Defender + Firewall, dispositivos con error (con el motivo real, no solo el nombre), servicio de impresión, BitLocker, sincronización de hora |
 
 El puntaje general es un promedio ponderado sobre los chequeos que sí
 pudieron completarse (`ok`=100, `warning`=60, `critical`=0); los que dan
 `unknown`/`error` (típicamente por falta de permisos de administrador) no
-penalizan el puntaje y se muestran aparte como "cobertura" (ej. `18/21`).
+penalizan el puntaje y se muestran aparte como "cobertura" (ej. `21/24`).
 
 ## Identificación del equipo
 
-Arriba del puntaje se muestra marca, modelo, número de serie, edición y
-build de Windows, activación, RAM (con slots usados/libres) y discos
-instalados — la info de referencia que se pide en cualquier ticket.
+Pestaña propia **Especificaciones**: marca, modelo, número de serie y de
+parte, dominio/usuario, edición y build de Windows, activación, RAM por
+módulo (fabricante, velocidad, tipo DDR3/4/5 vía SPD), discos con tamaño
+comercial, GPU con driver, y monitores/USB/impresoras conectados. Se puede
+exportar como imagen `.png` para pegar directo en un ticket. También se
+guarda automáticamente una copia local en `reportes/` cada vez que se
+guarda un escaneo — de respaldo, sin depender de que el equipo esté en un
+dominio con acceso a la red de la empresa.
+
+La misma pestaña muestra si el equipo **cumple los requisitos para
+Windows 11** (TPM 2.0, Secure Boot, UEFI, RAM, disco, CPU soportada) con un
+veredicto único.
 
 ## Diagnóstico probable (correlación)
 
@@ -68,14 +107,35 @@ lógica vive en `checks/correlate.py` y solo combina chequeos ya calculados
 
 ## Acciones rápidas
 
-Panel de acciones seguras (limpiar DNS, renovar IP, reiniciar Winsock,
-reiniciar cola de impresión, limpiar temporales, reiniciar Explorer, DISM
-`/RestoreHealth`) disponibles en cualquier momento, y también como botón
+24 acciones seguras (limpiar DNS, renovar IP, reiniciar Winsock, vaciar cola
+de impresión, sincronizar hora, reparar Windows Update, actualizar firmas
+de Defender, limpiar temporales, optimizar disco, reconstruir caché de
+íconos, entre otras) disponibles en cualquier momento, y también como botón
 "Aplicar solución" contextual en los chequeos donde la acción es la
 solución directa. Cada una pide confirmación y queda registrada en
 `actions_log.jsonl` (timestamp, acción, resultado). La whitelist vive en
 `checks/actions.py` — el cliente nunca puede mandar un comando arbitrario,
 solo un `action_id` validado contra esa lista.
+
+**Apagar / Reiniciar** el equipo están en la barra superior (no en la lista
+de acciones), accesibles desde cualquier pestaña — pensado para cuando solo
+hace falta revisar y apagar, sin tener que navegar la interfaz.
+
+## Pruebas manuales de hardware
+
+Pestaña **Pruebas**: no hay forma de confirmar por WMI que un teclado, un
+mouse, los parlantes, el micrófono o la cámara realmente funcionan — hay que
+probarlos. Esta sección da un lugar ordenado para hacerlo sin salir de la
+app:
+
+- **Teclado**: layout ISO latinoamericano (con Ñ), cada tecla se marca al
+  presionarla.
+- **Mouse**: clic izquierdo/derecho/medio y rueda arriba/abajo.
+- **Parlantes**: tono de prueba por canal (izquierdo/derecho/ambos).
+- **Micrófono**: medidor de nivel en vivo.
+- **Cámara**: vista previa en vivo.
+- **Pantalla**: colores sólidos a pantalla completa para detectar píxeles
+  muertos.
 
 ## Monitoreo en vivo (60s)
 
@@ -96,9 +156,9 @@ mismos datos de cliente/ticket/técnico) además del `.txt` original.
 
 ## Gestor de discos
 
-Pestaña **Herramientas** → "Cargar discos": lista discos y particiones
-reales (cada partición se numera "Parte N"), con formatear, crear
-partición, eliminar partición, renombrar volumen y cambiar letra de unidad.
+Pestaña **Discos**: lista discos y particiones reales (cada partición se
+numera "Parte N"), con formatear, crear partición, eliminar partición,
+renombrar volumen y cambiar letra de unidad.
 
 **El disco del sistema (donde está Windows) nunca se puede tocar** — se
 calcula en el servidor en el momento de cada acción (no una vez cacheada) y
@@ -110,29 +170,38 @@ PARTE 1`) antes de habilitar el botón de confirmar.
 
 ## Selector de técnico
 
-Pestaña **Visita e historial**: lista editable de técnicos (guardada en
+Pestaña **Reportes**: lista editable de técnicos (guardada en
 `diagfix_settings.json`, local a esta instalación) que recuerda el último
 usado. Cliente y Ticket siguen siendo texto libre.
 
 ## Guardar reporte en la red (NAS)
 
-También en **Visita e historial**. DiagFix **nunca guarda tu contraseña de
-red** — "Guardar credenciales de red (Windows)" la pasa una única vez al
+También en **Reportes**. DiagFix **nunca guarda tu contraseña de red** —
+"Guardar credenciales de red (Windows)" la pasa una única vez al
 Administrador de credenciales de Windows (`cmdkey`) y la descarta; de ahí en
 más, Windows resuelve el acceso a la ruta UNC configurada sin que DiagFix
 vuelva a manejarla. "Guardar reporte en la red" sube el mismo HTML del
 botón de exportar a esa ruta.
 
-## Pestañas y filtro
+## Interfaz
 
-El dashboard está organizado con una **barra lateral** (Diagnóstico /
-Herramientas / Visita e historial) en vez de pestañas arriba. La tarjeta de
-identidad arranca colapsada (solo una línea resumen; "Ver detalle" para el
-resto), y arriba de los resultados hay un checkbox **"Mostrar solo
-problemas"** que oculta los chequeos en `ok` para que salten a la vista los
-que sí necesitan atención (se recuerda entre sesiones vía `localStorage`).
+Barra lateral con 3 grupos (Diagnóstico / Herramientas / Registro) en vez
+de todo apilado en una sola pantalla. Arriba de los resultados hay un
+checkbox **"Mostrar solo problemas"** que oculta los chequeos en `ok` para
+que salten a la vista los que sí necesitan atención (se recuerda entre
+sesiones vía `localStorage`). Discos y Monitoreo se cargan/arrancan solos
+al entrar a esa pestaña.
 
-## Modo consola (sin navegador)
+## Cómo abre la app
+
+Al arrancar, DiagFix abre una **ventana propia** de Edge en modo `--app`
+(sin barra de direcciones ni pestañas — se ve como una aplicación, no como
+"alguien abrió el navegador"), con flags que evitan el asistente de
+bienvenida/términos que Edge muestra la primera vez que se usa en una
+cuenta de Windows. Si no encuentra un navegador Chromium instalado, cae al
+navegador predeterminado normal.
+
+### Modo consola (sin navegador)
 
 ```
 DiagFix.exe --console
@@ -145,38 +214,41 @@ completo, ficha del equipo, discos, acciones rápidas, guardar reporte,
 punto de restauración, zona de scripts). Se activa solo también cuando se
 detecta WinPE o no hay navegador disponible, sin necesidad del flag.
 
+## Actualizaciones
+
+Pestaña **Sistema** → "Buscar actualizaciones": consulta el último release
+de este mismo repo en GitHub y, si hay uno más nuevo, lo descarga e instala
+solo (un script espera a que el proceso actual cierre, reemplaza el `.exe`
+y vuelve a abrir la app). Solo funciona en el `.exe` empaquetado, no en
+`python app.py`. Ver [Publicar una actualización](#publicar-una-actualización)
+para el lado de quien mantiene el proyecto.
+
 ## Punto de restauración y zona de scripts
 
-Botón "Crear punto de restauración" (junto a Acciones rápidas) antes de
-tocar cualquier cosa — requiere admin y que la Protección del sistema esté
-activada en `C:`. La "Zona de scripts" lista y ejecuta `.ps1`/`.bat`/`.cmd`
-que vos mismo copies a la carpeta `scripts/` junto al programa, con
-confirmación y sin poder escapar de esa carpeta (bloqueo de path traversal).
-DiagFix no revisa el contenido de tus scripts — son tu responsabilidad.
-
-## Ficha de hardware profunda
-
-La tarjeta de identidad incluye por módulo de RAM: fabricante, número de
-parte, velocidad y tipo (DDR3/4/5) vía SPD, y los discos se muestran con su
-**tamaño comercial** ("500 GB" en vez de "465.7 GB" — los fabricantes
-marketean en GB decimal, Windows por defecto calcula en binario) y si hay
-Microsoft Office instalado.
+Botón "Crear punto de restauración" (pestaña Acciones) antes de tocar
+cualquier cosa — requiere admin y que la Protección del sistema esté
+activada en `C:`. La "Zona de scripts" (pestaña Scripts) lista y ejecuta
+`.ps1`/`.bat`/`.cmd` que vos mismo copies a la carpeta `scripts/` junto al
+programa, con confirmación y sin poder escapar de esa carpeta (bloqueo de
+path traversal). DiagFix no revisa el contenido de tus scripts — son tu
+responsabilidad.
 
 ## Inventario y reporte PNG
 
 Cada vez que guardás un escaneo en el historial, también se agrega una fila
 a `diagfix_inventory.csv` (equipo, serie, part number, SO, score, cliente,
 ticket, técnico) — una planilla acumulada de todas las visitas, descargable
-desde "Visita e historial" → "Descargar CSV". El reporte también se puede
-exportar como imagen `.png` (para pegar directo en un chat/ticket sin
-adjuntar un archivo aparte), renderizada con Pillow.
+desde la pestaña Inventario. El reporte también se puede exportar como
+imagen `.png` (para pegar directo en un chat/ticket sin adjuntar un archivo
+aparte), renderizada con Pillow.
 
 ## Mantenimiento de Windows
 
-- **Reparar Windows Update** y **Actualizar todas las apps (winget)**: dos
-  acciones más en el panel de Acciones rápidas.
-- **Programas de inicio** (pestaña Herramientas): a diferencia del chequeo
-  que solo cuenta, esto lista cada programa con su comando real y permite
+- **Reparar Windows Update**, **Actualizar todas las apps (winget)**,
+  **limpiar componentes viejos**, entre otras acciones del panel de
+  Acciones rápidas.
+- **Programas de inicio** (pestaña Sistema): a diferencia del chequeo que
+  solo cuenta, esto lista cada programa con su comando real y permite
   deshabilitarlo/habilitarlo — reversible, sin borrar nada (renombra la
   entrada de registro o el acceso directo en vez de eliminarlo).
 - **Backup de drivers**: exporta los drivers de terceros instalados a una
@@ -190,30 +262,35 @@ diagfix/
   console_ui.py            # modo consola (--console / WinPE, sin navegador)
   checks/
     base.py               # ejecución de comandos/PowerShell con encoding correcto,
-                           # + commercial_size_label (GB decimal vs binario)
-    network.py            # internet, DNS, gateway, wifi, DNS/proxy/VPN
-    hardware.py           # disco, S.M.A.R.T., RAM, CPU, batería
-    software.py           # reinicio pendiente, updates, event log, BSOD,
-                           # Defender/Firewall, dispositivos, spooler, BitLocker,
-                           # hora, sfc
+                           # ps_quote (interpolación segura), commercial_size_label
+    network.py            # internet, DNS, gateway, wifi, DNS/proxy/VPN, velocidad
+    hardware.py            # disco, S.M.A.R.T., RAM, CPU, batería
+    software.py            # reinicio pendiente, updates, event log, BSOD,
+                           # Defender/Firewall, dispositivos (con motivo), spooler,
+                           # BitLocker, hora, sfc
     system_info.py        # identificación del equipo: marca/modelo/serie/part
-                           # number/RAM por módulo (SPD)/discos/Office
-    actions.py            # whitelist de acciones aplicables + log de auditoría
-    monitor.py            # monitoreo en vivo (SSE) de 60s
-    correlate.py          # correlación de causa raíz entre chequeos
-    history.py            # historial de escaneos en SQLite
-    disks.py              # listado de discos/particiones + bloqueo del disco del sistema
+                           # number/RAM por módulo (SPD)/discos/GPU/periféricos/Office
+    win11_readiness.py     # requisitos de Windows 11 (TPM, Secure Boot, UEFI, etc.)
+    actions.py             # whitelist de acciones aplicables + log de auditoría
+                           # (incluye apagar/reiniciar el equipo)
+    monitor.py             # monitoreo en vivo (SSE) de 60s
+    correlate.py           # correlación de causa raíz entre chequeos
+    history.py             # historial de escaneos en SQLite
+    disks.py               # listado de discos/particiones + bloqueo del disco del sistema
     disk_actions.py        # formatear/crear/eliminar partición, renombrar, cambiar letra
     settings.py            # técnicos y ruta de red (diagfix_settings.json)
     nas.py                 # credenciales (cmdkey) y subida de reportes a la red
     restore.py              # punto de restauración del sistema
     scripts_runner.py        # ejecutor de scripts de la carpeta scripts/
     inventory.py             # inventario acumulado en CSV
-    report_image.py          # reporte renderizado como PNG (Pillow)
+    local_reports.py         # copia local automática de la ficha en reportes/
+    report_image.py          # reporte y ficha renderizados como PNG (Pillow)
     maintenance.py           # backup de drivers
     startup_manager.py       # gestor de inicio real (listar/deshabilitar/habilitar)
+    updater.py               # búsqueda/descarga de actualizaciones desde GitHub Releases
   static/
-    index.html
+    index.html              # incluye la pestaña Pruebas (teclado/mouse/parlantes/
+                           # micrófono/cámara/pantalla)
     style.css
     script.js
   scripts/                 # tus propios .ps1/.bat/.cmd (no versionar)
@@ -222,6 +299,7 @@ diagfix/
   diagfix_history.db       # se crea al guardar el primer escaneo (no versionar)
   diagfix_settings.json    # se crea al agregar un técnico o ruta de red (no versionar)
   diagfix_inventory.csv    # se crea al guardar el primer escaneo (no versionar)
+  reportes/                # copias locales automáticas de la ficha (no versionar)
 ```
 
 ## Cómo agregar un nuevo chequeo (para hacerlo más preciso con el tiempo)
@@ -238,7 +316,11 @@ diagfix/
 3. Si el chequeo ejecuta un comando de consola (no PowerShell), usa
    `checks.base.run` en vez de `subprocess` directo — decodifica UTF-8,
    UTF-16LE y code pages de consola automáticamente. Para PowerShell, usa
-   `checks.base.run_powershell`, que ya fuerza salida UTF-8.
+   `checks.base.run_powershell`, que ya fuerza salida UTF-8. Si interpolás
+   texto que no controlás (una etiqueta, una ruta) dentro de un comando de
+   PowerShell armado con f-string, pasalo por `checks.base.ps_quote` primero
+   y usá comillas simples — las dobles permiten `$(...)` (ejecución de
+   código) aunque saques las comillas del valor.
 4. Ajusta los umbrales según lo que veas en terreno.
 5. Si el chequeo puede combinarse con otro para sugerir una causa raíz más
    específica, agrega una regla en `checks/correlate.py`.
@@ -246,12 +328,13 @@ diagfix/
 ## Empaquetar como .exe
 
 ```bash
-pyinstaller --onefile --name DiagFix --add-data "static;static" app.py
+pyinstaller --onefile --name DiagFix --uac-admin --add-data "static;static" app.py
 ```
 
 El `.exe` queda en `dist/DiagFix.exe`, no necesita Python instalado.
+`--uac-admin` hace que Windows pida elevación automáticamente al abrirlo.
 **Reconstruilo cada vez que cambie algo en `checks/` o `static/`** — un
-`.exe` viejo no incluye módulos nuevos como el gestor de discos.
+`.exe` viejo no incluye módulos nuevos.
 
 ## Publicar una actualización
 
