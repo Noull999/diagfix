@@ -289,17 +289,112 @@ def battery_live_snapshot():
     return {"available": True, "percent": percent, "label": label, "ac_online": ac}
 
 
-def battery_live_stream(duration_seconds=600, interval_seconds=2):
-    """Generador de eventos SSE con el % y estado de la batería en vivo.
-    El técnico desconecta el cargador y observa: si el % baja de forma
-    realista, la batería sostiene carga real; si se congela o el equipo se
-    apaga, no la sostiene — sin depender del reporte estático de powercfg.
-    """
+def _live_stream(snapshot_fn, duration_seconds=600, interval_seconds=2):
+    """Generador SSE genérico: llama a `snapshot_fn()` cada `interval_seconds`
+    y emite el resultado como evento, hasta `duration_seconds` en total.
+    Comparten esta cadencia todas las pruebas "en vivo" de la pestaña
+    Pruebas (batería, Ethernet, USB, monitor) — el técnico observa el
+    número cambiar en tiempo real en vez de mirar una foto fija."""
     ticks = duration_seconds // interval_seconds
     for _ in range(ticks):
-        snap = battery_live_snapshot()
-        yield f"data: {json.dumps(snap, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(snapshot_fn(), ensure_ascii=False)}\n\n"
         time.sleep(interval_seconds)
+
+
+def battery_live_stream(duration_seconds=600, interval_seconds=2):
+    """El técnico desconecta el cargador y observa: si el % baja de forma
+    realista, la batería sostiene carga real; si se congela o el equipo se
+    apaga, no la sostiene — sin depender del reporte estático de powercfg."""
+    return _live_stream(battery_live_snapshot, duration_seconds, interval_seconds)
+
+
+_ETHERNET_LIVE_SCRIPT = r"""
+$out = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+    Where-Object { $_.MediaType -notmatch '802.11' } |
+    ForEach-Object { [ordered]@{ name = $_.Name; status = [string]$_.Status } })
+ConvertTo-Json -InputObject $out -Compress
+""".strip()
+
+_ETHERNET_STATUS_LABELS = {"Up": "Conectado", "Disconnected": "Desconectado", "Disabled": "Deshabilitado"}
+
+
+def ethernet_live_snapshot():
+    """Estado de los puertos de red cableada — para conectar un cable y ver
+    en vivo si pasa de "Desconectado" a "Conectado", confirmando que el
+    puerto físico y la placa de red funcionan de verdad."""
+    output = _run_powershell(_ETHERNET_LIVE_SCRIPT, timeout=10)
+    if output is None:
+        return {"available": False}
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return {"available": False}
+    if isinstance(data, dict):
+        data = [data]
+    if not data:
+        return {"available": False}
+    adaptadores = [
+        {"name": a.get("name"), "status": _ETHERNET_STATUS_LABELS.get(a.get("status"), a.get("status"))}
+        for a in data
+    ]
+    return {"available": True, "adapters": adaptadores}
+
+
+def ethernet_live_stream(duration_seconds=600, interval_seconds=2):
+    return _live_stream(ethernet_live_snapshot, duration_seconds, interval_seconds)
+
+
+_USB_LIVE_SCRIPT = r"""
+$d = @(Get-PnpDevice -Class USB -Status OK -ErrorAction SilentlyContinue | ForEach-Object { $_.FriendlyName })
+ConvertTo-Json -InputObject ([ordered]@{ count = $d.Count; names = $d }) -Compress -Depth 3
+""".strip()
+
+
+def usb_live_snapshot():
+    """Cantidad de dispositivos USB activos, para insertar algo puerto por
+    puerto y ver el contador subir — sin tener que abrir el Administrador
+    de dispositivos entre cada prueba."""
+    output = _run_powershell(_USB_LIVE_SCRIPT, timeout=10)
+    if not output:
+        return {"available": False}
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return {"available": False}
+    names = data.get("names")
+    if names is None:
+        names = []
+    elif isinstance(names, str):
+        names = [names]
+    return {"available": True, "count": data.get("count", len(names)), "names": names}
+
+
+def usb_live_stream(duration_seconds=600, interval_seconds=2):
+    return _live_stream(usb_live_snapshot, duration_seconds, interval_seconds)
+
+
+_MONITOR_LIVE_SCRIPT = r"""
+$m = @(Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBasicDisplayParams -ErrorAction SilentlyContinue)
+ConvertTo-Json -InputObject ([ordered]@{ count = $m.Count }) -Compress
+""".strip()
+
+
+def monitor_output_live_snapshot():
+    """Cantidad de monitores detectados, para conectar un cable HDMI/DP
+    externo y ver el contador subir — confirma que el puerto de salida de
+    video funciona sin instalar nada."""
+    output = _run_powershell(_MONITOR_LIVE_SCRIPT, timeout=10)
+    if not output:
+        return {"available": False}
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return {"available": False}
+    return {"available": True, "count": data.get("count", 0)}
+
+
+def monitor_output_live_stream(duration_seconds=600, interval_seconds=2):
+    return _live_stream(monitor_output_live_snapshot, duration_seconds, interval_seconds)
 
 
 def check_ram():

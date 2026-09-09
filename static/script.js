@@ -6,15 +6,19 @@ function switchTab(tabId) {
     btn.classList.toggle("active", btn.dataset.tab === tabId);
   });
 
-  // Cámara, micrófono y el stream de batería quedan prendidos hasta que se
-  // apagan a mano — si el técnico cambia de pestaña sin detenerlos, se
-  // cortan solos para no dejarlos activos de fondo. Va aparte de la carga
-  // automática de abajo: si fuera parte de la misma cadena if/else, salir
-  // de Pruebas hacia Discos o Monitoreo dejaría la cámara prendida.
+  // Cámara, micrófono y los streams en vivo (batería, Ethernet, USB,
+  // monitor) quedan prendidos hasta que se apagan a mano — si el técnico
+  // cambia de pestaña sin detenerlos, se cortan solos para no dejarlos
+  // activos de fondo. Va aparte de la carga automática de abajo: si fuera
+  // parte de la misma cadena if/else, salir de Pruebas hacia Discos o
+  // Monitoreo dejaría la cámara prendida.
   if (tabId !== "tab-pruebas") {
     stopMicTest();
     stopCameraTest();
     stopBatteryTest();
+    stopEthernetTest();
+    stopUsbTest();
+    stopMonitorOutputTest();
   }
 
   // Algunas secciones se cargan solas al entrar, para no obligar a un clic
@@ -1675,6 +1679,104 @@ function stopBatteryTest() {
 document.getElementById("test-battery-btn").addEventListener("click", () => {
   if (batterySource) stopBatteryTest();
   else startBatteryTest();
+});
+
+// ---- Puerto de red (Ethernet, en vivo) ----
+let ethernetSource = null;
+
+function startEthernetTest() {
+  ethernetSource = new EventSource("/api/ethernet/stream");
+  document.getElementById("test-ethernet-btn").textContent = "Detener prueba";
+  ethernetSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    const list = document.getElementById("test-ethernet-list");
+    list.innerHTML = "";
+    if (!data.available || !data.adapters.length) {
+      list.textContent = "No se detectó un adaptador de red cableada.";
+      return;
+    }
+    data.adapters.forEach((a) => {
+      const row = document.createElement("div");
+      row.className = "test-battery-readout";
+      row.innerHTML = "";
+      const name = document.createElement("span");
+      name.className = "status-text";
+      name.textContent = a.name;
+      const status = document.createElement("span");
+      status.className = "test-battery-percent";
+      status.style.fontSize = "16px";
+      status.textContent = a.status;
+      row.appendChild(name);
+      row.appendChild(status);
+      list.appendChild(row);
+    });
+  };
+  ethernetSource.onerror = () => stopEthernetTest();
+}
+
+function stopEthernetTest() {
+  if (ethernetSource) {
+    ethernetSource.close();
+    ethernetSource = null;
+  }
+  document.getElementById("test-ethernet-btn").textContent = "Iniciar prueba";
+}
+
+document.getElementById("test-ethernet-btn").addEventListener("click", () => {
+  if (ethernetSource) stopEthernetTest();
+  else startEthernetTest();
+});
+
+// ---- Puertos USB (en vivo) ----
+let usbSource = null;
+
+function startUsbTest() {
+  usbSource = new EventSource("/api/usb/stream");
+  document.getElementById("test-usb-btn").textContent = "Detener prueba";
+  usbSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    document.getElementById("test-usb-count").textContent = data.available ? data.count : "—";
+  };
+  usbSource.onerror = () => stopUsbTest();
+}
+
+function stopUsbTest() {
+  if (usbSource) {
+    usbSource.close();
+    usbSource = null;
+  }
+  document.getElementById("test-usb-btn").textContent = "Iniciar prueba";
+}
+
+document.getElementById("test-usb-btn").addEventListener("click", () => {
+  if (usbSource) stopUsbTest();
+  else startUsbTest();
+});
+
+// ---- Salida de video / monitor externo (en vivo) ----
+let monitorOutputSource = null;
+
+function startMonitorOutputTest() {
+  monitorOutputSource = new EventSource("/api/monitor-output/stream");
+  document.getElementById("test-monitor-btn").textContent = "Detener prueba";
+  monitorOutputSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    document.getElementById("test-monitor-count").textContent = data.available ? data.count : "—";
+  };
+  monitorOutputSource.onerror = () => stopMonitorOutputTest();
+}
+
+function stopMonitorOutputTest() {
+  if (monitorOutputSource) {
+    monitorOutputSource.close();
+    monitorOutputSource = null;
+  }
+  document.getElementById("test-monitor-btn").textContent = "Iniciar prueba";
+}
+
+document.getElementById("test-monitor-btn").addEventListener("click", () => {
+  if (monitorOutputSource) stopMonitorOutputTest();
+  else startMonitorOutputTest();
 });
 
 // ---- Cámara ----

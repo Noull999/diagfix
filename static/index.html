@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=37" />
+<link rel="stylesheet" href="/static/style.css?v=38" />
 </head>
 <body>
   <header class="topbar">
@@ -329,6 +329,45 @@
         </details>
 
         <details class="card test-card">
+          <summary class="test-card-summary">Puerto de red (Ethernet)</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-ethernet-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
+            </div>
+            <p class="card-desc">Conectá un cable de red y observá si el estado pasa a "Conectado" — confirma que el puerto físico y la placa de red funcionan.</p>
+            <div id="test-ethernet-list"></div>
+          </div>
+        </details>
+
+        <details class="card test-card">
+          <summary class="test-card-summary">Puertos USB</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-usb-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
+            </div>
+            <p class="card-desc">Insertá algo en cada puerto uno por uno y observá si el contador sube — sin tener que abrir el Administrador de dispositivos.</p>
+            <div class="test-battery-readout">
+              <span id="test-usb-count" class="test-battery-percent">—</span>
+              <span class="status-text">dispositivos activos</span>
+            </div>
+          </div>
+        </details>
+
+        <details class="card test-card">
+          <summary class="test-card-summary">Salida de video (monitor externo)</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-monitor-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
+            </div>
+            <p class="card-desc">Conectá un cable HDMI/DisplayPort externo y observá si el contador sube — confirma que el puerto de salida de video funciona.</p>
+            <div class="test-battery-readout">
+              <span id="test-monitor-count" class="test-battery-percent">—</span>
+              <span class="status-text">monitores detectados</span>
+            </div>
+          </div>
+        </details>
+
+        <details class="card test-card">
           <summary class="test-card-summary">Pantalla</summary>
           <div class="test-card-body">
             <p class="card-desc">Colores sólidos a pantalla completa para detectar píxeles muertos o manchas. Hacé clic o Esc para salir.</p>
@@ -437,6 +476,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=37"></script>
+  <script src="/static/script.js?v=38"></script>
 </body>
 </html>

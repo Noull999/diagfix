@@ -528,6 +528,33 @@ def battery_stream(request: Request):
     return StreamingResponse(hardware.battery_live_stream(), media_type="text/event-stream")
 
 
+@app.get("/api/ethernet/stream")
+def ethernet_stream(request: Request):
+    """Prueba de puerto Ethernet en vivo: estado de los adaptadores
+    cableados cada 2s, para conectar un cable y ver si pasa a "Conectado"."""
+    if not _same_origin(request):
+        return JSONResponse({"error": "Origen no permitido."}, status_code=403)
+    return StreamingResponse(hardware.ethernet_live_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/usb/stream")
+def usb_stream(request: Request):
+    """Prueba de puertos USB en vivo: cantidad de dispositivos activos
+    cada 2s, para insertar algo puerto por puerto y ver el contador subir."""
+    if not _same_origin(request):
+        return JSONResponse({"error": "Origen no permitido."}, status_code=403)
+    return StreamingResponse(hardware.usb_live_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/monitor-output/stream")
+def monitor_output_stream(request: Request):
+    """Prueba de salida de video en vivo: cantidad de monitores detectados
+    cada 2s, para conectar un cable HDMI/DP externo y ver el contador subir."""
+    if not _same_origin(request):
+        return JSONResponse({"error": "Origen no permitido."}, status_code=403)
+    return StreamingResponse(hardware.monitor_output_live_stream(), media_type="text/event-stream")
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

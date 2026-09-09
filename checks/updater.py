@@ -15,7 +15,7 @@ from pathlib import Path
 from .base import windows_ssl_context as _ssl_context
 
 # Se bumpea a mano en cada release, junto con el tag de git (ver README).
-CURRENT_VERSION = "1.5.1"
+CURRENT_VERSION = "1.6.0"
 
 _REPO = "Noull999/diagfix"
 _API_URL = f"https://api.github.com/repos/{_REPO}/releases/latest"
