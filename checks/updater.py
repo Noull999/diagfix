@@ -8,11 +8,12 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 # Se bumpea a mano en cada release, junto con el tag de git (ver README).
-CURRENT_VERSION = "1.4.0"
+CURRENT_VERSION = "1.4.1"
 
 _REPO = "Noull999/diagfix"
 _API_URL = f"https://api.github.com/repos/{_REPO}/releases/latest"
@@ -49,6 +50,24 @@ def check_for_update() -> dict:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # No hace falta ninguna cuenta de GitHub para esto — el repo y sus
+        # releases son públicos. Un 404/403 acá casi siempre es la red del
+        # cliente (firewall o proxy corporativo bloqueando el dominio, a
+        # veces devolviendo su propia página de error en vez de dejar pasar
+        # el pedido), no un problema de credenciales.
+        return {
+            "available": False,
+            "reason": f"No se pudo consultar GitHub (HTTP {exc.code}). "
+                      "No hace falta ninguna cuenta — probablemente la red de este equipo "
+                      "bloquea github.com (firewall o proxy corporativo).",
+        }
+    except urllib.error.URLError as exc:
+        return {
+            "available": False,
+            "reason": f"No se pudo conectar a GitHub ({exc.reason}). "
+                      "Revisa que este equipo tenga salida a internet.",
+        }
     except Exception as exc:
         return {"available": False, "reason": f"No se pudo consultar GitHub: {exc}"}
 
