@@ -253,6 +253,26 @@ El `.exe` queda en `dist/DiagFix.exe`, no necesita Python instalado.
 **Reconstruilo cada vez que cambie algo en `checks/` o `static/`** — un
 `.exe` viejo no incluye módulos nuevos como el gestor de discos.
 
+## Publicar una actualización
+
+La app tiene un botón "Buscar actualizaciones" (pestaña Sistema) que consulta
+el último release de este mismo repo en GitHub. Para publicar uno nuevo:
+
+```bash
+# 1. Bumpear CURRENT_VERSION en checks/updater.py (ej. "1.0.0" -> "1.1.0")
+# 2. Compilar el .exe (paso anterior)
+git add -A
+git commit -m "Describe el cambio"
+git push
+git tag v1.1.0
+git push origin v1.1.0
+gh release create v1.1.0 "dist/DiagFix.exe" --title "v1.1.0" --notes "Qué cambió"
+```
+
+El número de versión en el tag de git (`v1.1.0`) y en
+`checks/updater.py::CURRENT_VERSION` (`1.1.0`) tienen que coincidir — la app
+compara ambos para decidir si hay una versión más nueva.
+
 ## Próximos pasos posibles
 
 - Temperaturas de CPU/GPU (requiere una librería de terceros tipo
