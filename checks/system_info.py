@@ -240,4 +240,16 @@ def get_identity():
         "printer_count": data.get("printer_count"),
         "activation_status": activation_label,
         "office": data.get("office"),
+        "battery": _battery_info(),
     }
+
+
+def _battery_info():
+    """Salud de la batería para la ficha. Es `None` en equipos de escritorio
+    (sin batería), así que la fila simplemente no aparece."""
+    from .hardware import battery_capacity
+
+    datos = battery_capacity()
+    if not datos or "error" in datos:
+        return None
+    return datos

@@ -142,6 +142,13 @@ def render_specs_png(identity: dict) -> bytes:
         ("Dominio / grupo", identity.get("domain") or "—"),
         ("Usuario", identity.get("username") or "—"),
     ]
+    bateria = identity.get("battery")
+    if bateria:
+        equipo_rows.append((
+            "Batería",
+            f"{bateria['health_pct']}% de capacidad original "
+            f"({bateria['full_charge_mwh']:,} de {bateria['design_mwh']:,} mWh)".replace(",", "."),
+        ))
     sistema_rows = [
         ("Sistema operativo", identity.get("os_summary") or "—"),
         ("Compilación", f"build {identity.get('os_build')}, {identity.get('os_arch')}" if identity.get("os_build") else "—"),

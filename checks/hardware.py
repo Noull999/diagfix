@@ -149,10 +149,13 @@ def check_disk_smart():
     return _result("S.M.A.R.T. del disco", worst, "; ".join(details), "Se detectaron problemas en el estado físico del disco.", causes=causes, fix=fix)
 
 
-def check_battery_health():
-    """Compara la capacidad máxima actual de la batería contra su capacidad
-    de diseño para detectar desgaste. Devuelve None si el equipo no tiene
-    batería (desktop), para que run_all() no lo incluya.
+def battery_capacity():
+    """Capacidad de diseño vs. capacidad real de la batería, en mWh.
+
+    Devuelve `None` si el equipo no tiene batería (desktop), y un dict con
+    `error` si tiene pero no se pudo medir. Lo usan tanto el chequeo con
+    veredicto como la ficha del equipo (`system_info`), para no parsear el
+    reporte dos veces con lógica duplicada.
 
     Usa `powercfg /batteryreport` en vez de `Get-CimInstance ... root\\wmi
     BatteryStaticData` — se probó en este proyecto que esa clase WMI no
@@ -167,17 +170,10 @@ def check_battery_health():
     if (presence or "").strip().lower() != "true":
         return None
 
-    causes = ["Ciclos de carga/descarga acumulados con el tiempo (desgaste normal)", "Batería mantenida cargada al 100% constantemente por largos periodos", "Batería con varios años de uso"]
-    fix = [
-        "Si el equipo se apaga inesperadamente con batería, es señal de que ya no sostiene carga.",
-        "Evita mantener el equipo enchufado al 100% todo el tiempo cuando sea posible.",
-        "Si el desgaste es alto, evalúa el reemplazo de la batería con el fabricante.",
-    ]
-
     tmp_path = Path(tempfile.gettempdir()) / "diagfix_battery_report.html"
     output = _run(["powercfg", "/batteryreport", "/output", str(tmp_path)], timeout=20)
     if output is None or not tmp_path.exists():
-        return _result("Salud de la batería", "unknown", None, "No se pudo generar el reporte de batería.")
+        return {"error": "No se pudo generar el reporte de batería."}
     try:
         html = tmp_path.read_text(encoding="utf-8-sig", errors="ignore")
     finally:
@@ -189,14 +185,38 @@ def check_battery_health():
     design_match = _DESIGN_CAPACITY_RE.search(html)
     full_match = _FULL_CHARGE_CAPACITY_RE.search(html)
     if not design_match or not full_match:
-        return _result("Salud de la batería", "unknown", None, "No se pudo leer la capacidad en el reporte de batería.")
+        return {"error": "No se pudo leer la capacidad en el reporte de batería."}
 
     design = int(design_match.group(1).replace(",", ""))
     full = int(full_match.group(1).replace(",", ""))
     if design <= 0:
-        return _result("Salud de la batería", "unknown", None, "El reporte no tiene una capacidad de diseño válida.")
+        return {"error": "El reporte no tiene una capacidad de diseño válida."}
 
-    health_pct = round(full / design * 100)
+    return {
+        "design_mwh": design,
+        "full_charge_mwh": full,
+        "health_pct": round(full / design * 100),
+    }
+
+
+def check_battery_health():
+    """Veredicto de desgaste de la batería sobre los valores de
+    `battery_capacity()`. Devuelve None si el equipo no tiene batería
+    (desktop), para que run_all() no lo incluya."""
+    datos = battery_capacity()
+    if datos is None:
+        return None
+    if "error" in datos:
+        return _result("Salud de la batería", "unknown", None, datos["error"])
+
+    causes = ["Ciclos de carga/descarga acumulados con el tiempo (desgaste normal)", "Batería mantenida cargada al 100% constantemente por largos periodos", "Batería con varios años de uso"]
+    fix = [
+        "Si el equipo se apaga inesperadamente con batería, es señal de que ya no sostiene carga.",
+        "Evita mantener el equipo enchufado al 100% todo el tiempo cuando sea posible.",
+        "Si el desgaste es alto, evalúa el reemplazo de la batería con el fabricante.",
+    ]
+
+    health_pct = datos["health_pct"]
     value = f"{health_pct}% de capacidad original"
     if health_pct < 50:
         return _result("Salud de la batería", "critical", value, "La batería está muy desgastada.", causes=causes, fix=fix)

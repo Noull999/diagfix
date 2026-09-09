@@ -217,6 +217,13 @@ async function loadIdentity() {
     equipo.appendChild(identityField("Número de parte (P/N)", data.part_number));
     equipo.appendChild(identityField("Dominio / grupo", data.domain ? `${data.domain} (${data.part_of_domain ? "dominio" : "grupo de trabajo"})` : null));
     equipo.appendChild(identityField("Usuario", data.username));
+    if (data.battery) {
+      const b = data.battery;
+      equipo.appendChild(identityField(
+        "Batería",
+        `${b.health_pct}% de capacidad original (${b.full_charge_mwh.toLocaleString("es-CL")} de ${b.design_mwh.toLocaleString("es-CL")} mWh)`,
+      ));
+    }
 
     const sistema = document.getElementById("specs-sistema");
     sistema.innerHTML = "";
@@ -371,7 +378,9 @@ function renderDetail(check) {
   details.className = "check-detail";
 
   const summary = document.createElement("summary");
-  summary.textContent = "Posibles causas y solución";
+  summary.textContent = check.action_id
+    ? "Ver causas y aplicar solución"
+    : "Posibles causas y solución";
   details.appendChild(summary);
 
   if (check.causes && check.causes.length) {
@@ -444,6 +453,17 @@ function renderCategory(category) {
     value.className = "check-value";
     value.textContent = check.value ?? "—";
     row.appendChild(value);
+
+    // El botón para aplicar el arreglo vive dentro del desplegable, que
+    // arranca cerrado: sin esta marca no hay forma de saber desde afuera
+    // cuáles chequeos tienen solución de un clic sin abrirlos uno por uno.
+    if (check.action_id && check.status !== "ok") {
+      const marca = document.createElement("span");
+      marca.className = "check-fix-badge";
+      marca.textContent = "solución 1 clic";
+      marca.title = "Este problema se puede corregir desde la app";
+      row.appendChild(marca);
+    }
 
     item.appendChild(row);
 

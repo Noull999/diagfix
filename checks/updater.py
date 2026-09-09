@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 
 # Se bumpea a mano en cada release, junto con el tag de git (ver README).
-CURRENT_VERSION = "1.3.2"
+CURRENT_VERSION = "1.4.0"
 
 _REPO = "Noull999/diagfix"
 _API_URL = f"https://api.github.com/repos/{_REPO}/releases/latest"
