@@ -222,7 +222,9 @@ def check_battery_health():
     ]
 
     health_pct = datos["health_pct"]
-    value = f"{health_pct}% de capacidad original"
+    full = f"{datos['full_charge_mwh']:,}".replace(",", ".")
+    design = f"{datos['design_mwh']:,}".replace(",", ".")
+    value = f"{health_pct}% de capacidad original ({full} de {design} mWh)"
     if health_pct < 50:
         return _result("Salud de la batería", "critical", value, "La batería está muy desgastada.", causes=causes, fix=fix)
     if health_pct < 80:
