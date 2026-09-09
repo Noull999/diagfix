@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DiagFix — Panel de diagnóstico</title>
+<link rel="stylesheet" href="/static/style.css?v=26" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">◈</span>
+      <div>
+        <h1>DiagFix</h1>
+        <p class="subtitle">Diagnóstico rápido para soporte técnico en Windows</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="admin-badge" class="badge badge-unknown">Verificando permisos…</span>
+      <button id="scan-btn" class="btn btn-primary">Ejecutar diagnóstico</button>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <nav class="sidebar" aria-label="Secciones de DiagFix">
+      <p class="nav-group-title">Diagnóstico</p>
+      <button class="tab-btn active" data-tab="tab-diagnostico"><span class="nav-icon">⊙</span>Diagnóstico</button>
+      <button class="tab-btn" data-tab="tab-especificaciones"><span class="nav-icon">▣</span>Especificaciones</button>
+      <button class="tab-btn" data-tab="tab-monitoreo"><span class="nav-icon">∿</span>Monitoreo</button>
+      <button class="tab-btn" data-tab="tab-discos"><span class="nav-icon">⛁</span>Discos</button>
+
+      <p class="nav-group-title">Herramientas</p>
+      <button class="tab-btn" data-tab="tab-acciones"><span class="nav-icon">⚡</span>Acciones</button>
+      <button class="tab-btn" data-tab="tab-scripts"><span class="nav-icon">⌘</span>Scripts</button>
+      <button class="tab-btn" data-tab="tab-sistema"><span class="nav-icon">⚙</span>Sistema</button>
+
+      <p class="nav-group-title">Registro</p>
+      <button class="tab-btn" data-tab="tab-reportes"><span class="nav-icon">▤</span>Reportes</button>
+      <button class="tab-btn" data-tab="tab-inventario"><span class="nav-icon">▦</span>Inventario</button>
+    </nav>
+
+    <main>
+      <!-- ============================== DIAGNÓSTICO ============================== -->
+      <div id="tab-diagnostico" class="tab-panel">
+        <section class="card hero" aria-label="Estado general del equipo">
+          <div class="gauge-wrap">
+            <svg class="gauge" viewBox="0 0 120 120" role="img" aria-labelledby="gauge-title">
+              <title id="gauge-title">Puntaje general de salud del equipo</title>
+              <circle class="gauge-track" cx="60" cy="60" r="52" />
+              <circle id="gauge-fill" class="gauge-fill" cx="60" cy="60" r="52" />
+            </svg>
+            <div class="gauge-center">
+              <span id="score-value">--</span>
+              <span class="gauge-label">/ 100</span>
+            </div>
+          </div>
+          <div class="hero-copy">
+            <h2 id="hero-status">Esperando primer diagnóstico</h2>
+            <p id="hero-detail" class="muted">Presiona "Ejecutar diagnóstico" para escanear red, hardware y software.</p>
+            <div class="hero-meta">
+              <span id="os-info" class="mono">—</span>
+              <span id="scan-time" class="mono muted"></span>
+            </div>
+          </div>
+        </section>
+
+        <section id="insights" class="card insights-section" aria-live="polite" hidden>
+          <div class="card-header"><h2 class="card-title">Diagnóstico probable</h2></div>
+          <div id="insights-list"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Resultados por categoría</h2>
+            <label class="filter-toggle">
+              <input type="checkbox" id="filter-only-problems" />
+              Mostrar solo problemas
+            </label>
+          </div>
+          <div id="results" class="results-grid" aria-live="polite">
+            <!-- Las columnas de categorías se generan por JS -->
+          </div>
+        </section>
+      </div>
+
+      <!-- ============================== ESPECIFICACIONES ============================== -->
+      <div id="tab-especificaciones" class="tab-panel" hidden>
+        <section id="specs-empty" class="card">
+          <p class="card-desc" style="margin:0;">Ejecutá un diagnóstico para ver la ficha del equipo.</p>
+        </section>
+
+        <div id="specs-content" hidden>
+          <section class="card">
+            <div class="card-header">
+              <h2 class="card-title">Equipo</h2>
+              <button id="specs-export-btn" class="btn btn-ghost btn-small">Exportar ficha (.png)</button>
+            </div>
+            <dl id="specs-equipo" class="spec-grid"></dl>
+          </section>
+
+          <section class="card">
+            <div class="card-header"><h2 class="card-title">Sistema operativo</h2></div>
+            <dl id="specs-sistema" class="spec-grid"></dl>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <h2 class="card-title">Memoria RAM</h2>
+              <span id="specs-ram-summary" class="status-text"></span>
+            </div>
+            <div class="table-scroll">
+              <table class="spec-table">
+                <thead><tr><th>Slot</th><th>Fabricante</th><th>Capacidad</th><th>Tipo</th><th>Velocidad</th><th>Part Number</th></tr></thead>
+                <tbody id="specs-ram-table"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-header"><h2 class="card-title">Almacenamiento</h2></div>
+            <div class="table-scroll">
+              <table class="spec-table">
+                <thead><tr><th>Unidad</th><th>Tamaño</th><th>Tipo</th><th>Bus</th></tr></thead>
+                <tbody id="specs-disks-table"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-header"><h2 class="card-title">Video y periféricos</h2></div>
+            <div class="table-scroll">
+              <table class="spec-table">
+                <thead><tr><th>GPU</th><th>Driver</th><th>Fecha driver</th><th>VRAM</th></tr></thead>
+                <tbody id="specs-gpu-table"></tbody>
+              </table>
+            </div>
+            <dl id="specs-perifericos" class="spec-grid"></dl>
+          </section>
+        </div>
+
+        <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Compatibilidad con Windows 11</h2>
+            <span id="win11-badge" class="badge"></span>
+          </div>
+          <p id="win11-empty" class="card-desc" style="margin:0;">Cargando…</p>
+          <div class="table-scroll" hidden id="win11-table-wrap">
+            <table class="spec-table">
+              <thead><tr><th>Requisito</th><th>Estado</th><th>Detalle</th></tr></thead>
+              <tbody id="win11-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- ============================== MONITOREO ============================== -->
+      <div id="tab-monitoreo" class="tab-panel" hidden>
+        <section class="card monitor-section">
+          <div class="card-header">
+            <h2 class="card-title">Monitoreo en vivo (60s)</h2>
+            <button id="monitor-btn" class="btn btn-ghost btn-small">Iniciar monitoreo (60s)</button>
+            <span id="monitor-status" class="status-text"></span>
+          </div>
+          <p class="card-desc">CPU, RAM, red y latencia cada 2 segundos durante 60s — pensado para fallas intermitentes que un escaneo puntual no capta.</p>
+          <div id="monitor-live" class="monitor-live" hidden>
+            <dl class="monitor-stats">
+              <div><dt>CPU actual</dt><dd id="monitor-cpu">—</dd></div>
+              <div><dt>RAM actual</dt><dd id="monitor-ram">—</dd></div>
+              <div><dt>Red (subida / bajada)</dt><dd id="monitor-net">—</dd></div>
+              <div><dt>Latencia</dt><dd id="monitor-latency">—</dd></div>
+            </dl>
+            <div class="monitor-columns">
+              <div>
+                <p class="detail-label">Historial (últimos ticks arriba)</p>
+                <div class="table-scroll">
+                  <table class="monitor-table">
+                    <thead><tr><th>Hora</th><th>CPU</th><th>RAM</th><th>↑ KB/s</th><th>↓ KB/s</th><th>Latencia</th></tr></thead>
+                    <tbody id="monitor-history"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <p class="detail-label">Top procesos (último tick)</p>
+                <ul id="monitor-top-processes" class="monitor-top-list"></ul>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ============================== DISCOS ============================== -->
+      <div id="tab-discos" class="tab-panel" hidden>
+        <section class="card disks-section">
+          <div class="card-header">
+            <h2 class="card-title">Gestor de discos</h2>
+            <button id="disks-load-btn" class="btn btn-ghost btn-small">Cargar discos</button>
+            <span id="disks-status" class="status-text"></span>
+          </div>
+          <p class="card-desc">
+            Formatear y eliminar particiones es irreversible — se pide escribir una frase exacta para confirmar.
+            El disco del sistema (donde está Windows) no se puede tocar, ni siquiera desde la API.
+          </p>
+          <div id="disks-list"></div>
+        </section>
+      </div>
+
+      <!-- ============================== ACCIONES ============================== -->
+      <div id="tab-acciones" class="tab-panel" hidden>
+        <section class="card quick-actions-section">
+          <div class="card-header">
+            <h2 class="card-title">Acciones rápidas</h2>
+            <button id="restore-point-btn" class="btn btn-ghost btn-small">Crear punto de restauración</button>
+            <span id="restore-point-status" class="status-text"></span>
+          </div>
+          <p class="card-desc">Cada acción pide confirmación antes de ejecutarse y queda registrada en <code>actions_log.jsonl</code>.</p>
+          <div id="quick-actions" class="quick-actions-grid"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Verificación profunda</h2>
+          </div>
+          <p class="card-desc">Verifica archivos de sistema con <code>sfc /scannow</code> — puede tardar varios minutos.</p>
+          <button id="sfc-btn" class="btn btn-ghost">Verificación profunda de archivos del sistema (sfc)</button>
+          <span id="sfc-status" class="status-text"></span>
+        </section>
+      </div>
+
+      <!-- ============================== SCRIPTS ============================== -->
+      <div id="tab-scripts" class="tab-panel" hidden>
+        <section class="card quick-actions-section">
+          <div class="card-header">
+            <h2 class="card-title">Zona de scripts</h2>
+            <button id="scripts-reload-btn" class="btn btn-ghost btn-small">Actualizar lista</button>
+            <span id="scripts-status" class="status-text"></span>
+          </div>
+          <p class="card-desc">
+            Copiá tus propios <code>.ps1</code>/<code>.bat</code>/<code>.cmd</code> a la carpeta <code>scripts/</code> junto al programa — aparecen acá para correrlos con confirmación. DiagFix no revisa su contenido.
+          </p>
+          <div id="scripts-list"></div>
+        </section>
+      </div>
+
+      <!-- ============================== SISTEMA ============================== -->
+      <div id="tab-sistema" class="tab-panel" hidden>
+        <section class="card quick-actions-section">
+          <div class="card-header">
+            <h2 class="card-title">Programas de inicio</h2>
+            <button id="startup-reload-btn" class="btn btn-ghost btn-small">Actualizar lista</button>
+            <span id="startup-status" class="status-text"></span>
+          </div>
+          <p class="card-desc">Habilitar/deshabilitar es reversible — no borra el programa, solo evita que arranque con Windows.</p>
+          <div id="startup-list"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-header"><h2 class="card-title">Backup de drivers</h2></div>
+          <p class="card-desc">Exporta los drivers de terceros instalados a una carpeta, para reinstalarlos después de formatear. Requiere permisos de administrador.</p>
+          <div class="nas-row">
+            <input id="drivers-dest" type="text" placeholder="C:\Backup\Drivers" />
+            <button id="drivers-backup-btn" class="btn btn-ghost btn-small">Exportar drivers</button>
+          </div>
+          <span id="drivers-status" class="status-text"></span>
+        </section>
+      </div>
+
+      <!-- ============================== REPORTES ============================== -->
+      <div id="tab-reportes" class="tab-panel" hidden>
+        <section class="card visit-section">
+          <div class="card-header"><h2 class="card-title">Datos de la visita</h2></div>
+          <div class="visit-fields">
+            <label>Cliente
+              <input id="visit-client" type="text" placeholder="Nombre del cliente" />
+            </label>
+            <label>Ticket
+              <input id="visit-ticket" type="text" placeholder="N° de ticket" />
+            </label>
+            <label>Técnico
+              <select id="visit-technician"></select>
+            </label>
+          </div>
+          <div class="visit-actions">
+            <button id="save-history-btn" class="btn btn-ghost">Guardar en historial</button>
+            <button id="view-history-btn" class="btn btn-ghost">Ver historial de este equipo</button>
+            <span id="history-status" class="status-text"></span>
+          </div>
+          <div id="history-list" class="history-list" hidden></div>
+        </section>
+
+        <section class="card">
+          <div class="card-header"><h2 class="card-title">Exportar reporte</h2></div>
+          <div class="visit-actions">
+            <button id="export-btn" class="btn btn-ghost">Exportar (.txt)</button>
+            <button id="export-html-btn" class="btn btn-ghost">Exportar (.html)</button>
+            <button id="export-png-btn" class="btn btn-ghost">Exportar (.png)</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header"><h2 class="card-title">Guardar en la red</h2></div>
+          <div class="nas-row">
+            <input id="nas-path" type="text" placeholder="\\servidor\carpeta" />
+            <button id="nas-save-path-btn" class="btn btn-ghost btn-small">Guardar ruta</button>
+          </div>
+          <div class="nas-row">
+            <button id="nas-credentials-btn" class="btn btn-ghost btn-small">Guardar credenciales de red (Windows)</button>
+            <button id="nas-upload-btn" class="btn btn-ghost btn-small">Guardar reporte en la red</button>
+          </div>
+          <span id="nas-status" class="status-text"></span>
+        </section>
+      </div>
+
+      <!-- ============================== INVENTARIO ============================== -->
+      <div id="tab-inventario" class="tab-panel" hidden>
+        <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Inventario de equipos</h2>
+            <button id="inventory-view-btn" class="btn btn-ghost btn-small">Ver inventario</button>
+            <a id="inventory-export-link" href="/api/inventory/export" class="btn btn-ghost btn-small">Descargar CSV</a>
+          </div>
+          <p class="card-desc">Cada escaneo guardado en el historial agrega una fila acá — una planilla acumulada de todas las visitas.</p>
+          <div id="inventory-list" class="history-list" hidden></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
+  </footer>
+
+  <script src="/static/script.js?v=26"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# Compilado y build de PyInstaller — se genera con `pyinstaller`, no se versiona
+dist/
+build/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Datos locales generados en cada equipo donde corre DiagFix — nunca subir
+# historial, logs de acciones ni reportes de clientes reales.
+*.db
+*.jsonl
+diagfix_settings.json
+reportes/
+
+# Scripts personales del técnico en la Zona de Scripts — no son parte de la
+# app, y activar_windows.cmd en particular jamás debe ser público.
+scripts/*
+!scripts/.gitkeep
