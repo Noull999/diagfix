@@ -518,6 +518,16 @@ def monitor_stream(request: Request):
     return StreamingResponse(monitor.stream_ticks(), media_type="text/event-stream")
 
 
+@app.get("/api/battery/stream")
+def battery_stream(request: Request):
+    """Prueba de batería en vivo (pestaña Pruebas): % y estado cada 2s,
+    para que el técnico vea si sostiene carga real al desconectar el
+    cargador, sin depender del reporte estático de powercfg."""
+    if not _same_origin(request):
+        return JSONResponse({"error": "Origen no permitido."}, status_code=403)
+    return StreamingResponse(hardware.battery_live_stream(), media_type="text/event-stream")
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

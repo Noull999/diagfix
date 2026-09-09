@@ -7,6 +7,7 @@ UTF-8 o UTF-16LE. Eso rompe cualquier acento ("Señal" -> no matchea nunca) y
 hace fallar chequeos en silencio.
 """
 import platform
+import ssl
 import subprocess
 import sys
 from pathlib import Path
@@ -122,6 +123,35 @@ def commercial_size_label(size_bytes):
         tb = closest / 1000
         return f"{tb:g} TB"
     return f"{closest} GB"
+
+
+def windows_ssl_context() -> ssl.SSLContext:
+    """Contexto TLS que además confía en los certificados del almacén de
+    Windows (ROOT + CA), no solo en el paquete de certificados que trae
+    Python empaquetado (PyInstaller). Sin esto, un antivirus o proxy
+    corporativo que inspecciona HTTPS con su propio certificado raíz —
+    instalado y confiable para Windows/Edge, pero desconocido para el
+    Python embebido— hace fallar la conexión con
+    `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`,
+    aunque el equipo tenga internet perfectamente. `ssl.enum_certificates`
+    es una API de la stdlib exclusiva de Windows, no requiere ninguna
+    dependencia nueva. Usarlo en cualquier `urllib.request.urlopen(...,
+    context=...)` que salga a internet."""
+    ctx = ssl.create_default_context()
+    if hasattr(ssl, "enum_certificates"):
+        for store in ("ROOT", "CA"):
+            try:
+                entries = ssl.enum_certificates(store)
+            except OSError:
+                continue
+            for cert_der, encoding, _trust in entries:
+                if encoding != "x509_asn":
+                    continue
+                try:
+                    ctx.load_verify_locations(cadata=cert_der)
+                except ssl.SSLError:
+                    pass  # certificado repetido o inválido: se ignora, no es fatal.
+    return ctx
 
 
 def result(name, status, value, message, causes=None, fix=None, action_id=None):

@@ -12,8 +12,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from .base import windows_ssl_context as _ssl_context
+
 # Se bumpea a mano en cada release, junto con el tag de git (ver README).
-CURRENT_VERSION = "1.4.1"
+CURRENT_VERSION = "1.5.0"
 
 _REPO = "Noull999/diagfix"
 _API_URL = f"https://api.github.com/repos/{_REPO}/releases/latest"
@@ -48,7 +50,7 @@ def check_for_update() -> dict:
         _API_URL, headers={"User-Agent": _USER_AGENT, "Accept": "application/vnd.github+json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         # No hace falta ninguna cuenta de GitHub para esto — el repo y sus
@@ -114,7 +116,7 @@ def apply_update(download_url: str) -> None:
     nuevo = carpeta / "DiagFix_nuevo.exe"
 
     req = urllib.request.Request(download_url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(req, timeout=180) as resp:
+    with urllib.request.urlopen(req, timeout=180, context=_ssl_context()) as resp:
         nuevo.write_bytes(resp.read())
 
     bat_path = carpeta / "diagfix_actualizador.bat"

@@ -743,3 +743,43 @@ input::placeholder { color: var(--faint); }
   background: var(--accent-soft);
   border: 1px solid var(--accent-border);
 }
+
+/* ---------- Pruebas: tarjetas desplegables ---------- */
+.test-card {
+  padding: 0;
+  overflow: hidden;
+}
+.test-card-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--space-5) var(--space-6);
+  font-size: 14.5px;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  user-select: none;
+}
+.test-card-summary::-webkit-details-marker { display: none; }
+.test-card-summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: var(--space-3);
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.test-card[open] .test-card-summary::before { transform: rotate(90deg); }
+.test-card-summary:hover { background: var(--surface-2); }
+.test-card-body { padding: 0 var(--space-6) var(--space-5); }
+.test-card-body .card-header { margin-bottom: var(--space-3); }
+
+.test-battery-readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.test-battery-percent {
+  font-family: var(--font-mono);
+  font-size: 32px;
+  font-weight: 650;
+  color: var(--text);
+}

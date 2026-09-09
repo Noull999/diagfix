@@ -358,11 +358,13 @@ def check_internet_speed():
     responde al ping pero baja a 1 Mbps se siente caída para el usuario."""
     import urllib.request
 
+    from .base import windows_ssl_context as _ssl_context
+
     # Cloudflare responde 403 al user-agent por defecto de urllib.
     peticion = urllib.request.Request(_SPEED_URL, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
     try:
         start = time.perf_counter()
-        with urllib.request.urlopen(peticion, timeout=15) as resp:
+        with urllib.request.urlopen(peticion, timeout=15, context=_ssl_context()) as resp:
             downloaded = len(resp.read())
         elapsed = time.perf_counter() - start
     except Exception:

@@ -6,14 +6,15 @@ function switchTab(tabId) {
     btn.classList.toggle("active", btn.dataset.tab === tabId);
   });
 
-  // Cámara y micrófono quedan prendidos hasta que se apagan a mano — si el
-  // técnico cambia de pestaña sin detenerlos, se cortan solos para no
-  // dejarlos activos de fondo. Va aparte de la carga automática de abajo:
-  // si fuera parte de la misma cadena if/else, salir de Pruebas hacia
-  // Discos o Monitoreo dejaría la cámara prendida.
+  // Cámara, micrófono y el stream de batería quedan prendidos hasta que se
+  // apagan a mano — si el técnico cambia de pestaña sin detenerlos, se
+  // cortan solos para no dejarlos activos de fondo. Va aparte de la carga
+  // automática de abajo: si fuera parte de la misma cadena if/else, salir
+  // de Pruebas hacia Discos o Monitoreo dejaría la cámara prendida.
   if (tabId !== "tab-pruebas") {
     stopMicTest();
     stopCameraTest();
+    stopBatteryTest();
   }
 
   // Algunas secciones se cargan solas al entrar, para no obligar a un clic
@@ -221,7 +222,9 @@ async function loadIdentity() {
       const b = data.battery;
       equipo.appendChild(identityField(
         "Batería",
-        `${b.health_pct}% de capacidad original (${b.full_charge_mwh.toLocaleString("es-CL")} de ${b.design_mwh.toLocaleString("es-CL")} mWh)`,
+        b.error
+          ? `No se pudo leer (${b.error})`
+          : `${b.health_pct}% de capacidad original (${b.full_charge_mwh.toLocaleString("es-CL")} de ${b.design_mwh.toLocaleString("es-CL")} mWh)`,
       ));
     }
 
@@ -1632,6 +1635,46 @@ function stopMicTest() {
 document.getElementById("test-mic-btn").addEventListener("click", () => {
   if (micStream) stopMicTest();
   else startMicTest();
+});
+
+// ---- Batería (en vivo) ----
+let batterySource = null;
+
+function startBatteryTest() {
+  batterySource = new EventSource("/api/battery/stream");
+  document.getElementById("test-battery-btn").textContent = "Detener prueba";
+  batterySource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    const percentEl = document.getElementById("test-battery-percent");
+    const labelEl = document.getElementById("test-battery-label");
+    if (!data.available) {
+      percentEl.textContent = "—";
+      labelEl.textContent = "No se detectó una batería.";
+      return;
+    }
+    percentEl.textContent = `${data.percent}%`;
+    labelEl.textContent = data.label;
+  };
+  batterySource.onerror = () => {
+    // El equipo pudo haberse apagado justo por esto — es la prueba en sí,
+    // no necesariamente un error de la app.
+    document.getElementById("test-battery-label").textContent =
+      "Se cortó la conexión (¿se apagó el equipo al desconectar el cargador?).";
+    stopBatteryTest();
+  };
+}
+
+function stopBatteryTest() {
+  if (batterySource) {
+    batterySource.close();
+    batterySource = null;
+  }
+  document.getElementById("test-battery-btn").textContent = "Iniciar prueba";
+}
+
+document.getElementById("test-battery-btn").addEventListener("click", () => {
+  if (batterySource) stopBatteryTest();
+  else startBatteryTest();
 });
 
 // ---- Cámara ----

@@ -3,6 +3,7 @@ import json
 import platform
 import re
 import tempfile
+import time
 from pathlib import Path
 
 try:
@@ -37,10 +38,10 @@ _BATTERY_PRESENT_SCRIPT = "[bool](Get-CimInstance Win32_Battery -ErrorAction Sil
 # estar localizadas), pero se agrega la variante en español como red de
 # seguridad tolerante, mismo patrón que el resto del código (`perdidos|loss`).
 _DESIGN_CAPACITY_RE = re.compile(
-    r'(?:DESIGN CAPACITY|CAPACIDAD DE DISE[ÑN]O)</span></td><td[^>]*>\s*([\d,]+)\s*mWh', re.IGNORECASE
+    r'(?:DESIGN CAPACITY|CAPACIDAD DE DISE[ÑN]O)</span></td><td[^>]*>\s*([\d.,]+)\s*mWh', re.IGNORECASE
 )
 _FULL_CHARGE_CAPACITY_RE = re.compile(
-    r'(?:FULL CHARGE CAPACITY|CAPACIDAD DE CARGA COMPLETA)</span></td><td[^>]*>\s*([\d,]+)\s*mWh', re.IGNORECASE
+    r'(?:FULL CHARGE CAPACITY|CAPACIDAD DE CARGA COMPLETA)</span></td><td[^>]*>\s*([\d.,]+)\s*mWh', re.IGNORECASE
 )
 
 
@@ -187,8 +188,12 @@ def battery_capacity():
     if not design_match or not full_match:
         return {"error": "No se pudo leer la capacidad en el reporte de batería."}
 
-    design = int(design_match.group(1).replace(",", ""))
-    full = int(full_match.group(1).replace(",", ""))
+    # El separador de miles del reporte sigue el idioma de Windows: coma en
+    # inglés ("45,730 mWh"), punto en español latinoamericano ("45.730 mWh").
+    # Nunca aparecen decimales acá (son mWh enteros), así que sacar ambos
+    # caracteres es seguro en los dos casos.
+    design = int(design_match.group(1).replace(",", "").replace(".", ""))
+    full = int(full_match.group(1).replace(",", "").replace(".", ""))
     if design <= 0:
         return {"error": "El reporte no tiene una capacidad de diseño válida."}
 
@@ -223,6 +228,76 @@ def check_battery_health():
     if health_pct < 80:
         return _result("Salud de la batería", "warning", value, "La batería tiene desgaste notorio.", causes=causes, fix=fix)
     return _result("Salud de la batería", "ok", value, "La batería conserva buena parte de su capacidad original.")
+
+
+_BATTERY_LIVE_SCRIPT = r"""
+$b = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue
+$s = Get-CimInstance -Namespace root/wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue
+[ordered]@{
+    percent  = if ($b) { $b.EstimatedChargeRemaining } else { $null }
+    status   = if ($b) { [int]$b.BatteryStatus } else { $null }
+    acOnline = if ($s) { [bool]$s.PowerOnline } else { $null }
+} | ConvertTo-Json -Compress
+""".strip()
+
+# BatteryStatus de Win32_Battery. El código 2 ("Unknown") aparece en la
+# práctica en muchos equipos cuando están enchufados y ya cargados del
+# todo — no es un error, es una rareza conocida del proveedor WMI de varios
+# fabricantes — por eso el label final no se basa solo en esta tabla, sino
+# combinado con `acOnline` y el propio porcentaje.
+_BATTERY_STATUS_LABELS = {
+    3: "Completa", 4: "Baja", 5: "Crítica",
+    6: "Cargando", 7: "Cargando (alta)", 8: "Cargando (baja)", 9: "Cargando (crítica)",
+    11: "Carga parcial",
+}
+
+
+def battery_live_snapshot():
+    """Una lectura instantánea de % y estado de batería, para el test en
+    vivo de la pestaña Pruebas — a diferencia de `battery_capacity()`
+    (una foto fija del reporte de powercfg, que puede quedar con datos
+    viejos si la batería casi no se usó), esto consulta el estado actual
+    cada vez que se llama."""
+    output = _run_powershell(_BATTERY_LIVE_SCRIPT, timeout=10)
+    if not output:
+        return {"available": False}
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return {"available": False}
+    percent = data.get("percent")
+    if percent is None:
+        return {"available": False}
+
+    ac = data.get("acOnline")
+    status_code = data.get("status")
+    charging = status_code in (6, 7, 8, 9)
+
+    if charging:
+        label = _BATTERY_STATUS_LABELS.get(status_code, "Cargando")
+    elif ac and percent >= 99:
+        label = "Completa (con cargador)"
+    elif ac:
+        label = "Con cargador (sin cargar)"
+    elif ac is False:
+        label = "Con batería (sin cargador)"
+    else:
+        label = _BATTERY_STATUS_LABELS.get(status_code, "Desconocido")
+
+    return {"available": True, "percent": percent, "label": label, "ac_online": ac}
+
+
+def battery_live_stream(duration_seconds=600, interval_seconds=2):
+    """Generador de eventos SSE con el % y estado de la batería en vivo.
+    El técnico desconecta el cargador y observa: si el % baja de forma
+    realista, la batería sostiene carga real; si se congela o el equipo se
+    apaga, no la sostiene — sin depender del reporte estático de powercfg.
+    """
+    ticks = duration_seconds // interval_seconds
+    for _ in range(ticks):
+        snap = battery_live_snapshot()
+        yield f"data: {json.dumps(snap, ensure_ascii=False)}\n\n"
+        time.sleep(interval_seconds)
 
 
 def check_ram():

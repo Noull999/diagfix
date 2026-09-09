@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=35" />
+<link rel="stylesheet" href="/static/style.css?v=37" />
 </head>
 <body>
   <header class="topbar">
@@ -245,66 +245,96 @@
       </div>
 
       <!-- ============================== PRUEBAS ============================== -->
+      <!-- Cada prueba es un <details> propio: con varias pruebas ya no
+           entran todas abiertas a la vez sin desplazarse mucho, así que se
+           ven todos los títulos de un vistazo y se abre solo la que hace
+           falta. Mismo patrón que "Ver causas y aplicar solución". -->
       <div id="tab-pruebas" class="tab-panel" hidden>
-        <section class="card">
-          <div class="card-header">
-            <h2 class="card-title">Teclado</h2>
-            <button id="test-keyboard-reset" class="btn btn-ghost btn-small">Reiniciar prueba</button>
+        <details class="card test-card">
+          <summary class="test-card-summary">Teclado</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-keyboard-reset" class="btn btn-ghost btn-small">Reiniciar prueba</button>
+            </div>
+            <p class="card-desc">Presioná cada tecla del teclado físico — se marca en verde apenas la detecta.</p>
+            <div id="test-keyboard" class="test-keyboard"></div>
           </div>
-          <p class="card-desc">Presioná cada tecla del teclado físico — se marca en verde apenas la detecta.</p>
-          <div id="test-keyboard" class="test-keyboard"></div>
-        </section>
+        </details>
 
-        <section class="card">
-          <div class="card-header">
-            <h2 class="card-title">Mouse</h2>
-            <button id="test-mouse-reset" class="btn btn-ghost btn-small">Reiniciar prueba</button>
+        <details class="card test-card">
+          <summary class="test-card-summary">Mouse</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-mouse-reset" class="btn btn-ghost btn-small">Reiniciar prueba</button>
+            </div>
+            <p class="card-desc">Hacé clic izquierdo, derecho, del medio, y girá la rueda dentro del recuadro.</p>
+            <div id="test-mouse-pad" class="test-mouse-pad">
+              <div class="test-mouse-zone" data-btn="left">Clic izquierdo</div>
+              <div class="test-mouse-zone" data-btn="middle">Clic del medio</div>
+              <div class="test-mouse-zone" data-btn="right">Clic derecho</div>
+              <div class="test-mouse-zone" data-btn="scrollup">Rueda ↑</div>
+              <div class="test-mouse-zone" data-btn="scrolldown">Rueda ↓</div>
+            </div>
           </div>
-          <p class="card-desc">Hacé clic izquierdo, derecho, del medio, y girá la rueda dentro del recuadro.</p>
-          <div id="test-mouse-pad" class="test-mouse-pad">
-            <div class="test-mouse-zone" data-btn="left">Clic izquierdo</div>
-            <div class="test-mouse-zone" data-btn="middle">Clic del medio</div>
-            <div class="test-mouse-zone" data-btn="right">Clic derecho</div>
-            <div class="test-mouse-zone" data-btn="scrollup">Rueda ↑</div>
-            <div class="test-mouse-zone" data-btn="scrolldown">Rueda ↓</div>
-          </div>
-        </section>
+        </details>
 
-        <section class="card">
-          <div class="card-header"><h2 class="card-title">Parlantes</h2></div>
-          <p class="card-desc">Reproduce un tono de prueba por canal — confirmá que suena del lado correcto.</p>
-          <div class="test-actions-row">
-            <button class="btn btn-ghost btn-small" data-speaker="left">▶ Canal izquierdo</button>
-            <button class="btn btn-ghost btn-small" data-speaker="right">▶ Canal derecho</button>
-            <button class="btn btn-ghost btn-small" data-speaker="both">▶ Ambos canales</button>
+        <details class="card test-card">
+          <summary class="test-card-summary">Parlantes</summary>
+          <div class="test-card-body">
+            <p class="card-desc">Reproduce un tono de prueba por canal — confirmá que suena del lado correcto.</p>
+            <div class="test-actions-row">
+              <button class="btn btn-ghost btn-small" data-speaker="left">▶ Canal izquierdo</button>
+              <button class="btn btn-ghost btn-small" data-speaker="right">▶ Canal derecho</button>
+              <button class="btn btn-ghost btn-small" data-speaker="both">▶ Ambos canales</button>
+            </div>
           </div>
-        </section>
+        </details>
 
-        <section class="card">
-          <div class="card-header">
-            <h2 class="card-title">Micrófono</h2>
-            <button id="test-mic-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
+        <details class="card test-card">
+          <summary class="test-card-summary">Micrófono</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-mic-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
+            </div>
+            <p class="card-desc">Hablá cerca del micrófono — la barra debe moverse con el volumen de la voz.</p>
+            <div class="test-level-bar"><div id="test-mic-level" class="test-level-fill"></div></div>
+            <span id="test-mic-status" class="status-text"></span>
           </div>
-          <p class="card-desc">Hablá cerca del micrófono — la barra debe moverse con el volumen de la voz.</p>
-          <div class="test-level-bar"><div id="test-mic-level" class="test-level-fill"></div></div>
-          <span id="test-mic-status" class="status-text"></span>
-        </section>
+        </details>
 
-        <section class="card">
-          <div class="card-header">
-            <h2 class="card-title">Cámara</h2>
-            <button id="test-camera-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
+        <details class="card test-card">
+          <summary class="test-card-summary">Cámara</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-camera-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
+            </div>
+            <p class="card-desc">Muestra la imagen en vivo de la webcam para confirmar que funciona.</p>
+            <video id="test-camera-video" class="test-camera-video" autoplay playsinline muted hidden></video>
+            <span id="test-camera-status" class="status-text"></span>
           </div>
-          <p class="card-desc">Muestra la imagen en vivo de la webcam para confirmar que funciona.</p>
-          <video id="test-camera-video" class="test-camera-video" autoplay playsinline muted hidden></video>
-          <span id="test-camera-status" class="status-text"></span>
-        </section>
+        </details>
 
-        <section class="card">
-          <div class="card-header"><h2 class="card-title">Pantalla</h2></div>
-          <p class="card-desc">Colores sólidos a pantalla completa para detectar píxeles muertos o manchas. Hacé clic o Esc para salir.</p>
-          <button id="test-screen-btn" class="btn btn-ghost btn-small">Iniciar prueba de pantalla</button>
-        </section>
+        <details class="card test-card">
+          <summary class="test-card-summary">Batería</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-battery-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
+            </div>
+            <p class="card-desc">Desconectá el cargador y observá: si el % baja de forma realista, la batería sostiene carga real. Si se congela o el equipo se apaga solo, no la sostiene — más allá de lo que diga el reporte de salud.</p>
+            <div class="test-battery-readout">
+              <span id="test-battery-percent" class="test-battery-percent">—</span>
+              <span id="test-battery-label" class="status-text"></span>
+            </div>
+          </div>
+        </details>
+
+        <details class="card test-card">
+          <summary class="test-card-summary">Pantalla</summary>
+          <div class="test-card-body">
+            <p class="card-desc">Colores sólidos a pantalla completa para detectar píxeles muertos o manchas. Hacé clic o Esc para salir.</p>
+            <button id="test-screen-btn" class="btn btn-ghost btn-small">Iniciar prueba de pantalla</button>
+          </div>
+        </details>
       </div>
       <div id="test-screen-overlay" class="test-screen-overlay" hidden></div>
 
@@ -407,6 +437,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=35"></script>
+  <script src="/static/script.js?v=37"></script>
 </body>
 </html>

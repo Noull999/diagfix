@@ -143,7 +143,9 @@ def render_specs_png(identity: dict) -> bytes:
         ("Usuario", identity.get("username") or "—"),
     ]
     bateria = identity.get("battery")
-    if bateria:
+    if bateria and "error" in bateria:
+        equipo_rows.append(("Batería", f"No se pudo leer ({bateria['error']})"))
+    elif bateria:
         equipo_rows.append((
             "Batería",
             f"{bateria['health_pct']}% de capacidad original "

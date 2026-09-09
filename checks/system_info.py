@@ -245,11 +245,12 @@ def get_identity():
 
 
 def _battery_info():
-    """Salud de la batería para la ficha. Es `None` en equipos de escritorio
-    (sin batería), así que la fila simplemente no aparece."""
+    """Salud de la batería para la ficha. Es `None` solo en equipos de
+    escritorio (sin batería) — la fila no aparece. Si el equipo SÍ tiene
+    batería pero no se pudo leer su capacidad (reporte de powercfg vacío o
+    con formato inesperado), se propaga el error en vez de esconderlo: antes
+    ambos casos se trataban igual y un error real quedaba indistinguible de
+    "no tiene batería", lo que llevó a pensar que la app no la detectaba."""
     from .hardware import battery_capacity
 
-    datos = battery_capacity()
-    if not datos or "error" in datos:
-        return None
-    return datos
+    return battery_capacity()
