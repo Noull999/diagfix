@@ -731,13 +731,3 @@ input::placeholder { color: var(--faint); }
   .test-mouse-pad { grid-template-columns: repeat(2, 1fr); }
 }
 
-.power-countdown {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  background: color-mix(in srgb, var(--critical) 14%, var(--bg));
-  border-bottom: 1px solid color-mix(in srgb, var(--critical) 45%, transparent);
-}
-.power-countdown span { color: var(--critical); font-weight: 650; font-size: 13.5px; }

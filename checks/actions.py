@@ -267,9 +267,10 @@ def _rebuild_icon_cache():
 
 
 # Demora antes de reiniciar/apagar de verdad: le da tiempo al técnico a
-# arrepentirse y tocar "Cancelar" si tocó el botón equivocado — `shutdown /a`
-# solo puede abortar una acción que todavía está en cuenta regresiva.
-_POWER_ACTION_DELAY_SECONDS = 20
+# La confirmación del navegador (confirm()) ya es el paso de "¿estás
+# seguro?" — este margen es solo para que Windows alcance a cerrar procesos
+# en orden, no una ventana para cancelar (no hay botón de cancelar en la UI).
+_POWER_ACTION_DELAY_SECONDS = 5
 
 
 def _restart_pc():
@@ -278,7 +279,7 @@ def _restart_pc():
          "/c", "DiagFix va a reiniciar este equipo."],
         timeout=10,
     )
-    return output is not None, f"Reinicio programado en {_POWER_ACTION_DELAY_SECONDS} segundos. Cancelalo desde acá si fue un error."
+    return output is not None, "Reiniciando el equipo…"
 
 
 def _shutdown_pc():
@@ -287,14 +288,7 @@ def _shutdown_pc():
          "/c", "DiagFix va a apagar este equipo."],
         timeout=10,
     )
-    return output is not None, f"Apagado programado en {_POWER_ACTION_DELAY_SECONDS} segundos. Cancelalo desde acá si fue un error."
-
-
-def _cancel_power_action():
-    output = _run(["shutdown", "/a"], timeout=10)
-    # "shutdown /a" devuelve error si no había ningún apagado/reinicio en
-    # curso para cancelar — no es una falla real de la acción en sí.
-    return True, "Se canceló el apagado/reinicio programado (si había uno en curso)." if output is not None else "No había ningún apagado/reinicio pendiente para cancelar."
+    return output is not None, "Apagando el equipo…"
 
 
 ACTIONS = {
@@ -420,18 +414,13 @@ ACTIONS = {
     },
     "restart_pc": {
         "label": "Reiniciar equipo",
-        "description": f"Reinicia el equipo en {_POWER_ACTION_DELAY_SECONDS} segundos, cerrando programas sin guardar. Se puede cancelar durante la cuenta regresiva.",
+        "description": "Reinicia el equipo, cerrando los programas abiertos sin guardar.",
         "run": _restart_pc,
     },
     "shutdown_pc": {
         "label": "Apagar equipo",
-        "description": f"Apaga el equipo en {_POWER_ACTION_DELAY_SECONDS} segundos, cerrando programas sin guardar. Se puede cancelar durante la cuenta regresiva.",
+        "description": "Apaga el equipo, cerrando los programas abiertos sin guardar.",
         "run": _shutdown_pc,
-    },
-    "cancel_power_action": {
-        "label": "Cancelar apagado/reinicio",
-        "description": "Cancela un apagado o reinicio programado que todavía esté en cuenta regresiva.",
-        "run": _cancel_power_action,
     },
 }
 
