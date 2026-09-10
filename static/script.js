@@ -242,6 +242,31 @@ async function loadIdentity() {
     sistema.appendChild(identityField("Último arranque", data.last_boot));
     sistema.appendChild(identityField("Office", data.office));
 
+    // Panel "Componentes": resumen condensado para que una foto de la fila
+    // superior alcance por sí sola, sin bajar a las tablas detalladas.
+    const compCpu = document.getElementById("specs-componentes-cpu");
+    compCpu.innerHTML = "";
+    compCpu.appendChild(identityField("CPU", data.cpu_name));
+
+    const primerModulo = (data.ram_modules || [])[0];
+    document.getElementById("specs-componentes-ram-value").textContent =
+      data.ram_total_gb != null ? `${data.ram_total_gb} GB` : "—";
+    document.getElementById("specs-componentes-ram-detail").textContent = [
+      primerModulo?.type,
+      primerModulo?.speed_mhz ? `${primerModulo.speed_mhz} MHz` : null,
+      data.ram_slots_used != null ? `${data.ram_slots_used}/${data.ram_slots_total ?? "?"} slots` : null,
+    ].filter(Boolean).join(" · ") || "—";
+
+    const primerDisco = (data.disks || [])[0];
+    document.getElementById("specs-componentes-disco-value").textContent = primerDisco?.size_label || "—";
+    document.getElementById("specs-componentes-disco-detail").textContent = [
+      primerDisco?.media_type, primerDisco?.bus_type,
+    ].filter(Boolean).join(" · ") || "—";
+
+    const compGpu = document.getElementById("specs-componentes-gpu");
+    compGpu.innerHTML = "";
+    compGpu.appendChild(identityField("GPU", (data.gpus || [])[0]?.name));
+
     document.getElementById("specs-ram-summary").textContent =
       data.ram_total_gb != null
         ? `${data.ram_total_gb} GB total · ${data.ram_slots_used ?? "?"}/${data.ram_slots_total ?? "?"} slots usados` +

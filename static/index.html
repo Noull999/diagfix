@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=41" />
+<link rel="stylesheet" href="/static/style.css?v=42" />
 </head>
 <body>
   <header class="topbar">
@@ -93,43 +93,68 @@
         </section>
 
         <div id="specs-content" hidden>
-          <section class="card">
-            <div class="card-header">
-              <h2 class="card-title">Equipo</h2>
-              <button id="warranty-btn" class="btn btn-ghost btn-small" title="Consulta la garantía en la web del fabricante usando el número de serie">Consultar garantía</button>
-              <button id="specs-export-btn" class="btn btn-ghost btn-small">Exportar ficha (.png)</button>
-            </div>
-            <dl id="specs-equipo" class="spec-grid"></dl>
-            <span id="warranty-status" class="status-text"></span>
-          </section>
+          <div class="specs-top-row">
+            <section class="card">
+              <div class="card-header">
+                <h2 class="card-title">Equipo</h2>
+                <button id="warranty-btn" class="btn btn-ghost btn-small" title="Consulta la garantía en la web del fabricante usando el número de serie">Consultar garantía</button>
+                <button id="specs-export-btn" class="btn btn-ghost btn-small">Exportar ficha (.png)</button>
+              </div>
+              <dl id="specs-equipo" class="spec-grid"></dl>
+              <span id="warranty-status" class="status-text"></span>
+            </section>
 
-          <section class="card">
-            <div class="card-header"><h2 class="card-title">Sistema operativo</h2></div>
-            <dl id="specs-sistema" class="spec-grid"></dl>
-          </section>
+            <section class="card">
+              <div class="card-header"><h2 class="card-title">Sistema operativo</h2></div>
+              <dl id="specs-sistema" class="spec-grid"></dl>
+            </section>
 
-          <section class="card">
-            <div class="card-header">
-              <h2 class="card-title">Memoria RAM</h2>
-              <span id="specs-ram-summary" class="status-text"></span>
-            </div>
-            <div class="table-scroll">
-              <table class="spec-table">
-                <thead><tr><th>Slot</th><th>Fabricante</th><th>Capacidad</th><th>Tipo</th><th>Velocidad</th><th>Part Number</th></tr></thead>
-                <tbody id="specs-ram-table"></tbody>
-              </table>
-            </div>
-          </section>
+            <section class="card specs-components-card">
+              <div class="card-header"><h2 class="card-title">Componentes</h2></div>
+              <p class="specs-component-label">Procesador</p>
+              <dl id="specs-componentes-cpu" class="spec-grid"></dl>
+              <hr class="specs-component-divider" />
+              <p class="specs-component-label">Memoria</p>
+              <div class="specs-big-stat">
+                <span id="specs-componentes-ram-value" class="specs-big-number">—</span>
+                <span id="specs-componentes-ram-detail" class="specs-big-sub">—</span>
+              </div>
+              <hr class="specs-component-divider" />
+              <p class="specs-component-label">Almacenamiento</p>
+              <div class="specs-big-stat">
+                <span id="specs-componentes-disco-value" class="specs-big-number">—</span>
+                <span id="specs-componentes-disco-detail" class="specs-big-sub">—</span>
+              </div>
+              <hr class="specs-component-divider" />
+              <p class="specs-component-label">Video</p>
+              <dl id="specs-componentes-gpu" class="spec-grid"></dl>
+            </section>
+          </div>
 
-          <section class="card">
-            <div class="card-header"><h2 class="card-title">Almacenamiento</h2></div>
-            <div class="table-scroll">
-              <table class="spec-table">
-                <thead><tr><th>Unidad</th><th>Tamaño</th><th>Tipo</th><th>Bus</th></tr></thead>
-                <tbody id="specs-disks-table"></tbody>
-              </table>
-            </div>
-          </section>
+          <div class="specs-detail-row">
+            <section class="card">
+              <div class="card-header">
+                <h2 class="card-title">Memoria RAM</h2>
+                <span id="specs-ram-summary" class="status-text"></span>
+              </div>
+              <div class="table-scroll">
+                <table class="spec-table">
+                  <thead><tr><th>Slot</th><th>Fabricante</th><th>Capacidad</th><th>Tipo</th><th>Velocidad</th><th>Part Number</th></tr></thead>
+                  <tbody id="specs-ram-table"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-header"><h2 class="card-title">Almacenamiento</h2></div>
+              <div class="table-scroll">
+                <table class="spec-table">
+                  <thead><tr><th>Unidad</th><th>Tamaño</th><th>Tipo</th><th>Bus</th></tr></thead>
+                  <tbody id="specs-disks-table"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
 
           <section class="card">
             <div class="card-header"><h2 class="card-title">Video y periféricos</h2></div>
@@ -481,6 +506,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=41"></script>
+  <script src="/static/script.js?v=42"></script>
 </body>
 </html>

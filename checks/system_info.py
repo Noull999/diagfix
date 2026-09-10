@@ -61,6 +61,9 @@ if ($physDisks) {
     })
 }
 
+$cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+$cpuName = if ($cpu.Name) { ($cpu.Name -replace '\s+', ' ').Trim() } else { $null }
+
 $gpuInfo = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object {
     [ordered]@{
         name           = $_.Name
@@ -74,7 +77,14 @@ $monitorCount = 0
 try { $monitorCount = (Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBasicDisplayParams -ErrorAction Stop | Measure-Object).Count } catch {}
 
 $usbCount = 0
-try { $usbCount = (Get-PnpDevice -Class USB -Status OK -ErrorAction Stop | Measure-Object).Count } catch {}
+try {
+    # Igual que en la prueba en vivo de Pruebas: sin filtrar, esto también
+    # cuenta los controladores de host (bus PCI) y los concentradores raíz,
+    # que están siempre presentes aunque no haya nada conectado.
+    $usbCount = (Get-PnpDevice -Class USB -Status OK -ErrorAction Stop |
+        Where-Object { $_.InstanceId -notlike 'PCI\*' -and $_.Service -notin @('USBHUB', 'USBHUB3', 'USBHUB30') } |
+        Measure-Object).Count
+} catch {}
 
 $printerCount = 0
 try { $printerCount = (Get-Printer -ErrorAction Stop | Measure-Object).Count } catch {}
@@ -95,6 +105,7 @@ $result = [ordered]@{
     model            = $cs.Model
     serial           = $bios.SerialNumber
     part_number      = $partNumber
+    cpu_name         = $cpuName
     os_caption       = $os.Caption
     os_display_version = $displayVersion
     os_build         = $os.BuildNumber
@@ -220,6 +231,7 @@ def get_identity():
         "model": data.get("model"),
         "serial": data.get("serial"),
         "part_number": data.get("part_number"),
+        "cpu_name": data.get("cpu_name"),
         "os_summary": os_summary,
         "os_build": data.get("os_build"),
         "os_arch": data.get("os_arch"),

@@ -159,8 +159,27 @@ def render_specs_png(identity: dict) -> bytes:
         ("Office", identity.get("office") or "—"),
     ]
 
+    # Resumen condensado (CPU/RAM/disco/GPU) — el mismo que muestra el panel
+    # "Componentes" en pantalla, para que el PNG exportado no obligue a
+    # buscar estos datos más abajo, en las tablas detalladas.
+    primer_modulo = ram_modules[0] if ram_modules else {}
+    primer_disco = disks[0] if disks else {}
+    primera_gpu = gpus[0] if gpus else {}
+    detalle_ram = " · ".join(filter(None, [
+        primer_modulo.get("type"),
+        f"{primer_modulo['speed_mhz']} MHz" if primer_modulo.get("speed_mhz") else None,
+    ]))
+    ram_total_resumen = f"{identity.get('ram_total_gb')} GB" if identity.get("ram_total_gb") is not None else "—"
+    detalle_disco = " · ".join(filter(None, [primer_disco.get("media_type"), primer_disco.get("bus_type")]))
+    componentes_rows = [
+        ("CPU", identity.get("cpu_name") or "—"),
+        ("Memoria", f"{ram_total_resumen} ({detalle_ram})" if detalle_ram else ram_total_resumen),
+        ("Almacenamiento", f"{primer_disco.get('size_label') or '—'}" + (f" ({detalle_disco})" if detalle_disco else "")),
+        ("Video", primera_gpu.get("name") or "—"),
+    ]
+
     n_lines = (
-        4 + len(equipo_rows) + 2 + len(sistema_rows) + 2 + max(len(ram_modules), 1) + 2
+        4 + len(equipo_rows) + 2 + len(componentes_rows) + 2 + len(sistema_rows) + 2 + max(len(ram_modules), 1) + 2
         + max(len(disks), 1) + 2 + max(len(gpus), 1) + len(perifericos_rows) + 2
     )
     height = _PAD * 2 + n_lines * _LINE_H + 60
@@ -188,6 +207,7 @@ def render_specs_png(identity: dict) -> bytes:
         y += 14
 
     section("Equipo", equipo_rows)
+    section("Componentes", componentes_rows)
     section("Sistema operativo", sistema_rows)
 
     ram_total = identity.get("ram_total_gb", "?")
