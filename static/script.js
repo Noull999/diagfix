@@ -2011,12 +2011,21 @@ try {
   // Ignorar: preferencia no recordada entre sesiones.
 }
 
-loadSystemInfo();
-loadIdentity();
-loadWin11Readiness();
-loadActionsCatalog();
-loadScripts();
-loadStartupItems();
-loadTechnicians();
-loadNasSettings();
-runScan();
+// Especificaciones (loadIdentity) va primero y sola, en vez de junto con los
+// otros 8 pedidos de arranque. Los navegadores limitan a ~6 conexiones
+// simultáneas por origen (HTTP/1.1): si los 9 salen a la vez, Especificaciones
+// puede quedar en cola detrás del escaneo completo (~8s) sin ni siquiera
+// haber empezado a procesarse en el servidor — eso causaba que "a veces no
+// cargue". Esperar a que termine antes de disparar el resto le garantiza una
+// conexión libre de entrada, y de paso hace que sea lo primero en aparecer.
+(async () => {
+  await loadIdentity();
+  loadSystemInfo();
+  loadWin11Readiness();
+  loadActionsCatalog();
+  loadScripts();
+  loadStartupItems();
+  loadTechnicians();
+  loadNasSettings();
+  runScan();
+})();
