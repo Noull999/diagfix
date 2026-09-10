@@ -1,6 +1,7 @@
 """Diagnósticos de sistema operativo y software (Windows)."""
 import json
 import platform
+import re
 import socket
 import struct
 import time
@@ -46,6 +47,55 @@ $result.errorDevices = @(Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyCo
     Select-Object Name, ConfigManagerErrorCode)
 
 $result.spoolerStatus = [string](Get-Service -Name Spooler -ErrorAction SilentlyContinue).Status
+
+# Actualizaciones que FALLARON al instalarse (evento 20 de WindowsUpdateClient).
+# Un equipo que intenta actualizar y falla se ve igual de sano que uno al día
+# si solo se mira la fecha del último parche exitoso.
+try {
+    $fallidos = @(Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-WindowsUpdateClient';Id=20;StartTime=(Get-Date).AddDays(-30)} -ErrorAction Stop)
+    $result.failedUpdates30d = $fallidos.Count
+    $result.failedUpdateSample = if ($fallidos) { $fallidos[0].Message } else { $null }
+} catch {
+    $result.failedUpdates30d = 0
+    $result.failedUpdateSample = $null
+}
+
+# Servicios importantes que deberían estar corriendo y no lo están. Se
+# filtra por lista curada y por StartMode='Auto': en un Windows sano hay
+# muchos servicios en 'Manual' detenidos a propósito (Windows Update, BITS
+# e Installer arrancan por demanda), y los actualizadores de terceros
+# (ASUS, Edge, Google) están detenidos casi siempre — reportar todo eso
+# sería ruido, no diagnóstico.
+$importantes = @('WinDefend','MpsSvc','EventLog','Schedule','Dhcp','Dnscache','Audiosrv',
+                 'LanmanWorkstation','ProfSvc','CryptSvc','Spooler','wuauserv','BITS')
+$result.stoppedImportantServices = @(Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
+    Where-Object { $importantes -contains $_.Name -and $_.StartMode -eq 'Auto' -and $_.State -ne 'Running' } |
+    Select-Object -ExpandProperty DisplayName)
+
+# Aplicaciones que se cerraron solas (1000) o se colgaron (1002) en 30 días,
+# con el nombre del ejecutable que más veces falló — es el ticket más común
+# ("se me cierra solo") y el Visor de Eventos ya lo registra.
+try {
+    $crashes = @(Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='Application Error';Id=1000;StartTime=(Get-Date).AddDays(-30)} -ErrorAction Stop)
+} catch { $crashes = @() }
+try {
+    $hangs = @(Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='Application Hang';Id=1002;StartTime=(Get-Date).AddDays(-30)} -ErrorAction Stop)
+} catch { $hangs = @() }
+$result.appCrashes30d = $crashes.Count
+$result.appHangs30d = $hangs.Count
+$top = @($crashes + $hangs) | ForEach-Object { $_.Properties[0].Value } |
+    Where-Object { $_ } | Group-Object | Sort-Object Count -Descending | Select-Object -First 1
+$result.topFailingApp = if ($top) { $top.Name } else { $null }
+$result.topFailingAppCount = if ($top) { $top.Count } else { 0 }
+
+# Soporte del sistema operativo. Windows 10 dejó de recibir parches el
+# 14-10-2025; los equipos que siguen ahí solo están cubiertos si tienen ESU
+# (Extended Security Updates) activo, cuyo primer año vence el 13-10-2026.
+$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+$result.osCaption = [string]$os.Caption
+$result.osBuild = [int]$os.BuildNumber
+$result.esuActive = @(Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
+    Where-Object { ($_.Name -like '*ESU*' -or $_.Description -like '*Extended Security*') -and $_.LicenseStatus -eq 1 }).Count -gt 0
 
 $result | ConvertTo-Json -Compress -Depth 4
 """.strip()
@@ -372,6 +422,151 @@ def check_error_devices(batch=None):
     )
 
 
+def check_os_support(batch=None):
+    """Si el sistema operativo sigue recibiendo parches de seguridad.
+
+    Windows 10 dejó de recibir actualizaciones el 14-10-2025. Un equipo que
+    siguió ahí solo está cubierto si tiene ESU (Extended Security Updates)
+    activo — y el primer año de ESU vence el 13-10-2026, así que un "está
+    con ESU" tampoco es una respuesta tranquilizadora para siempre."""
+    if platform.system() != "Windows":
+        return _result("Soporte de Windows", "unknown", None, "Chequeo disponible solo en Windows.")
+    build = (batch or {}).get("osBuild")
+    if not build:
+        return _result("Soporte de Windows", "unknown", None, "No se pudo determinar la versión de Windows.")
+    caption = ((batch or {}).get("osCaption") or "Windows").replace("Microsoft ", "").strip()
+
+    # Windows 11 arranca en la build 22000; todo lo anterior es Windows 10 o
+    # más viejo, ya fuera del soporte estándar.
+    if build >= 22000:
+        return _result("Soporte de Windows", "ok", caption, "El sistema operativo sigue con soporte de Microsoft.")
+
+    fix_upgrade = [
+        "Revisa la tarjeta 'Compatibilidad con Windows 11' de la pestaña Especificaciones: dice si este equipo puede actualizarse.",
+        "Si el equipo es compatible, actualizar a Windows 11 es la solución definitiva y sin costo.",
+        "Si no es compatible, la única cobertura son las actualizaciones extendidas (ESU) o reemplazar el equipo.",
+    ]
+    if (batch or {}).get("esuActive"):
+        return _result(
+            "Soporte de Windows", "warning", f"{caption} con ESU activo",
+            "Windows 10 ya no tiene soporte estándar, pero este equipo tiene actualizaciones extendidas (ESU) activas.",
+            causes=["Windows 10 dejó de recibir parches el 14-10-2025"],
+            fix=["El primer año de ESU vence el 13-10-2026: planifica la actualización o la renovación antes de esa fecha."] + fix_upgrade,
+        )
+    return _result(
+        "Soporte de Windows", "critical", f"{caption} sin ESU",
+        "Este equipo no recibe parches de seguridad desde octubre de 2025.",
+        causes=[
+            "Windows 10 llegó a su fin de soporte el 14-10-2025 y el equipo no se actualizó",
+            "No tiene contratadas las actualizaciones extendidas (ESU)",
+        ],
+        fix=fix_upgrade,
+    )
+
+
+def check_failed_updates(batch=None):
+    """Actualizaciones que fallaron al instalarse (evento 20 del cliente de
+    Windows Update). Es distinto de `check_last_update`: un equipo que
+    intenta actualizar y falla una y otra vez tiene una fecha de último
+    parche exitoso reciente y se ve igual de sano que uno al día."""
+    if platform.system() != "Windows":
+        return _result("Actualizaciones fallidas", "unknown", None, "Chequeo disponible solo en Windows.")
+    if not batch or batch.get("failedUpdates30d") is None:
+        return _result("Actualizaciones fallidas", "unknown", None, "No se pudo consultar el historial de Windows Update.")
+    fallidas = batch.get("failedUpdates30d") or 0
+    if fallidas == 0:
+        return _result("Actualizaciones fallidas", "ok", "0", "Ninguna actualización falló en los últimos 30 días.")
+
+    # Windows reintenta la misma actualización varias veces, así que el
+    # número cuenta intentos, no actualizaciones distintas — por eso ni
+    # siquiera un número alto se marca como crítico por sí solo.
+    muestra = (batch.get("failedUpdateSample") or "").strip().replace("\r", " ").replace("\n", " ")
+    codigo = ""
+    match = re.search(r"(0x[0-9A-Fa-f]{8})", muestra)
+    if match:
+        codigo = f" (código {match.group(1)})"
+    causes = [
+        "Componentes de Windows Update dañados o con la caché corrupta",
+        "Espacio insuficiente en disco para instalar la actualización",
+        "Una actualización concreta incompatible con el equipo, que se reintenta en bucle",
+    ]
+    fix = [
+        "Usa 'Reparar Windows Update' desde este panel: reinicia los servicios y regenera la caché.",
+        "Revisa el historial en Configuración > Windows Update > Historial de actualizaciones para ver cuál falla.",
+        "Si siempre falla la misma actualización, búscala por su código de error o instálala manualmente desde el catálogo de Microsoft.",
+    ]
+    return _result(
+        "Actualizaciones fallidas", "warning", f"{fallidas} intentos fallidos (30d){codigo}",
+        "Hay actualizaciones que no se están llegando a instalar.",
+        causes=causes, fix=fix, action_id="repair_windows_update",
+    )
+
+
+def check_stopped_services(batch=None):
+    """Servicios importantes configurados en automático que están detenidos.
+
+    Se mira solo una lista curada y solo los que arrancan en 'Automático':
+    en un Windows sano hay muchos servicios en 'Manual' detenidos a
+    propósito (arrancan por demanda), y los actualizadores de terceros están
+    detenidos casi siempre — incluirlos daría una alerta falsa constante."""
+    if platform.system() != "Windows":
+        return _result("Servicios detenidos", "unknown", None, "Chequeo disponible solo en Windows.")
+    if not batch or "stoppedImportantServices" not in batch:
+        return _result("Servicios detenidos", "unknown", None, "No se pudo consultar el estado de los servicios.")
+    servicios = batch.get("stoppedImportantServices") or []
+    if isinstance(servicios, str):
+        servicios = [servicios]
+    if not servicios:
+        return _result("Servicios detenidos", "ok", "0", "Los servicios importantes están en ejecución.")
+    return _result(
+        "Servicios detenidos", "warning", ", ".join(servicios),
+        "Hay servicios importantes que deberían estar corriendo y están detenidos.",
+        causes=["Se detuvieron manualmente o fallaron al arrancar", "Una optimización de terceros los deshabilitó", "Malware o una limpieza agresiva los apagó"],
+        fix=[
+            "Abre 'Servicios' (services.msc), busca el servicio por nombre e inícialo.",
+            "Ponlo en modo 'Automático' si no lo está, para que arranque solo en el próximo reinicio.",
+            "Si vuelve a detenerse solo, revisa el Visor de Eventos para ver con qué error se cae.",
+        ],
+    )
+
+
+def check_app_crashes(batch=None):
+    """Aplicaciones que se cerraron solas o se colgaron en los últimos 30
+    días. Es el ticket más común ("se me cierra solo") y hasta ahora solo
+    detectábamos colapsos a nivel de sistema (BSOD), no de aplicación."""
+    if platform.system() != "Windows":
+        return _result("Aplicaciones que fallan", "unknown", None, "Chequeo disponible solo en Windows.")
+    if not batch or batch.get("appCrashes30d") is None:
+        return _result("Aplicaciones que fallan", "unknown", None, "No se pudo consultar el registro de aplicaciones.")
+    cierres = batch.get("appCrashes30d") or 0
+    cuelgues = batch.get("appHangs30d") or 0
+    total = cierres + cuelgues
+    if total == 0:
+        return _result("Aplicaciones que fallan", "ok", "0", "Ninguna aplicación se cerró ni se colgó en 30 días.")
+
+    top = batch.get("topFailingApp")
+    top_n = batch.get("topFailingAppCount") or 0
+    detalle = f"{cierres} cierres, {cuelgues} cuelgues (30d)"
+    if top:
+        detalle += f" — la que más falla: {top} x{top_n}"
+    causes = [
+        "La aplicación está desactualizada o su instalación quedó dañada",
+        "Falta de memoria RAM cuando la aplicación se usa junto con otras",
+        "Un driver de video desactualizado (afecta sobre todo a Office y navegadores)",
+        "Perfil de usuario o archivos de configuración de la aplicación corruptos",
+    ]
+    fix = [
+        "Actualiza o repara la aplicación que más falla desde Configuración > Aplicaciones > Modificar/Reparar.",
+        "Si es Office, usa su reparación rápida y luego la reparación en línea.",
+        "Actualiza el driver de video, que es causa frecuente de cierres en Office y navegadores.",
+    ]
+    if total > 20:
+        return _result("Aplicaciones que fallan", "critical", detalle,
+                        "Las aplicaciones se están cerrando o colgando muy seguido.", causes=causes, fix=fix)
+    return _result("Aplicaciones que fallan", "warning", detalle,
+                    "Se registraron cierres o cuelgues de aplicaciones.", causes=causes, fix=fix)
+
+
 def check_print_spooler(batch=None):
     """Estado del servicio de cola de impresión (clásico de tickets de
     'no puedo imprimir')."""
@@ -461,16 +656,20 @@ def run_all():
     # run_parallel con la lista plana de siempre: necesitan esperar ese
     # resultado compartido, que a su vez corre en paralelo con los chequeos
     # lentos (Defender, BitLocker) para no sumarle tiempo al total.
-    with ThreadPoolExecutor(max_workers=11) as pool:
+    with ThreadPoolExecutor(max_workers=15) as pool:
         batch_f = pool.submit(_software_fast_batch)
         futures = [
             pool.submit(check_pending_reboot),
+            pool.submit(lambda: check_os_support(batch_f.result())),
             pool.submit(lambda: check_last_update(batch_f.result())),
+            pool.submit(lambda: check_failed_updates(batch_f.result())),
             pool.submit(lambda: check_event_log_errors(batch_f.result())),
             pool.submit(check_startup_items),
             pool.submit(lambda: check_bsod(batch_f.result())),
+            pool.submit(lambda: check_app_crashes(batch_f.result())),
             pool.submit(check_defender_firewall),
             pool.submit(lambda: check_error_devices(batch_f.result())),
+            pool.submit(lambda: check_stopped_services(batch_f.result())),
             pool.submit(lambda: check_print_spooler(batch_f.result())),
             pool.submit(check_bitlocker),
             pool.submit(check_time_sync),

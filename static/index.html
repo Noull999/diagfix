@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=39" />
+<link rel="stylesheet" href="/static/style.css?v=41" />
 </head>
 <body>
   <header class="topbar">
@@ -96,9 +96,11 @@
           <section class="card">
             <div class="card-header">
               <h2 class="card-title">Equipo</h2>
+              <button id="warranty-btn" class="btn btn-ghost btn-small" title="Consulta la garantía en la web del fabricante usando el número de serie">Consultar garantía</button>
               <button id="specs-export-btn" class="btn btn-ghost btn-small">Exportar ficha (.png)</button>
             </div>
             <dl id="specs-equipo" class="spec-grid"></dl>
+            <span id="warranty-status" class="status-text"></span>
           </section>
 
           <section class="card">
@@ -334,8 +336,9 @@
             <div class="card-header">
               <button id="test-ethernet-btn" class="btn btn-ghost btn-small">Iniciar prueba</button>
             </div>
-            <p class="card-desc">Conectá un cable de red y observá si el estado pasa a "Conectado" — confirma que el puerto físico y la placa de red funcionan.</p>
+            <p class="card-desc">Conectá un cable de red y observá si el estado pasa a "Conectado". Dejalo vigilando y moviendo el cable: las desconexiones se cuentan abajo, que es como se delata un conector flojo.</p>
             <div id="test-ethernet-list"></div>
+            <p id="test-ethernet-drops" class="test-drops" hidden></p>
           </div>
         </details>
 
@@ -350,6 +353,7 @@
               <span id="test-usb-count" class="test-battery-percent">—</span>
               <span class="status-text">dispositivos activos</span>
             </div>
+            <p id="test-usb-drops" class="test-drops" hidden></p>
           </div>
         </details>
 
@@ -364,6 +368,7 @@
               <span id="test-monitor-count" class="test-battery-percent">—</span>
               <span class="status-text">monitores detectados</span>
             </div>
+            <p id="test-monitor-drops" class="test-drops" hidden></p>
           </div>
         </details>
 
@@ -476,6 +481,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=39"></script>
+  <script src="/static/script.js?v=41"></script>
 </body>
 </html>

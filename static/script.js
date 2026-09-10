@@ -47,6 +47,7 @@ const statusLabel = {
 let lastScan = null;
 let actionsCatalog = {};
 let currentSerial = null;
+let currentManufacturer = null;
 
 async function createRestorePoint() {
   const status = document.getElementById("restore-point-status");
@@ -211,6 +212,7 @@ async function loadIdentity() {
       return;
     }
     currentSerial = data.serial || null;
+    currentManufacturer = data.manufacturer || null;
 
     document.getElementById("specs-empty").hidden = true;
     document.getElementById("specs-content").hidden = false;
@@ -1684,7 +1686,37 @@ document.getElementById("test-battery-btn").addEventListener("click", () => {
 // ---- Puerto de red (Ethernet, en vivo) ----
 let ethernetSource = null;
 
+// ---- Conteo de caídas en las pruebas de puertos ----
+// Una lectura puntual no ve una falla intermitente: un puerto USB flojo o un
+// conector de red que se corta al mover el cable se ven perfectos si mirás
+// una sola vez. Como el stream ya manda una lectura cada 2s, alcanza con
+// comparar contra la anterior y contar cada vez que el valor baja.
+const contadoresCaidas = {};
+
+function reiniciarContadorCaidas(id) {
+  contadoresCaidas[id] = { previo: null, caidas: 0, desde: Date.now() };
+  const el = document.getElementById(`test-${id}-drops`);
+  if (el) el.hidden = true;
+}
+
+function registrarLectura(id, valor) {
+  const c = contadoresCaidas[id];
+  if (!c) return;
+  if (c.previo !== null && valor < c.previo) c.caidas++;
+  c.previo = valor;
+
+  const el = document.getElementById(`test-${id}-drops`);
+  if (!el) return;
+  const segundos = Math.round((Date.now() - c.desde) / 1000);
+  el.hidden = false;
+  el.textContent = c.caidas === 0
+    ? `Vigilando hace ${segundos}s — sin desconexiones.`
+    : `Vigilando hace ${segundos}s — ${c.caidas} desconexión${c.caidas === 1 ? "" : "es"} detectada${c.caidas === 1 ? "" : "s"}.`;
+  el.classList.toggle("test-drops-alert", c.caidas > 0);
+}
+
 function startEthernetTest() {
+  reiniciarContadorCaidas("ethernet");
   ethernetSource = new EventSource("/api/ethernet/stream");
   document.getElementById("test-ethernet-btn").textContent = "Detener prueba";
   ethernetSource.onmessage = (e) => {
@@ -1695,6 +1727,9 @@ function startEthernetTest() {
       list.textContent = "No se detectó un adaptador de red cableada.";
       return;
     }
+    // Cuenta cuántos adaptadores están conectados: si el cable se corta un
+    // instante, este número baja y queda registrado como desconexión.
+    registrarLectura("ethernet", data.adapters.filter((a) => (a.status || "").toLowerCase().startsWith("conect")).length);
     data.adapters.forEach((a) => {
       const row = document.createElement("div");
       row.className = "test-battery-readout";
@@ -1731,11 +1766,13 @@ document.getElementById("test-ethernet-btn").addEventListener("click", () => {
 let usbSource = null;
 
 function startUsbTest() {
+  reiniciarContadorCaidas("usb");
   usbSource = new EventSource("/api/usb/stream");
   document.getElementById("test-usb-btn").textContent = "Detener prueba";
   usbSource.onmessage = (e) => {
     const data = JSON.parse(e.data);
     document.getElementById("test-usb-count").textContent = data.available ? data.count : "—";
+    if (data.available) registrarLectura("usb", data.count);
   };
   usbSource.onerror = () => stopUsbTest();
 }
@@ -1757,11 +1794,13 @@ document.getElementById("test-usb-btn").addEventListener("click", () => {
 let monitorOutputSource = null;
 
 function startMonitorOutputTest() {
+  reiniciarContadorCaidas("monitor");
   monitorOutputSource = new EventSource("/api/monitor-output/stream");
   document.getElementById("test-monitor-btn").textContent = "Detener prueba";
   monitorOutputSource.onmessage = (e) => {
     const data = JSON.parse(e.data);
     document.getElementById("test-monitor-count").textContent = data.available ? data.count : "—";
+    if (data.available) registrarLectura("monitor", data.count);
   };
   monitorOutputSource.onerror = () => stopMonitorOutputTest();
 }
@@ -1891,6 +1930,42 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 });
 
+// ---- Garantía ----
+// Va a pedido y no al cargar la ficha: manda el número de serie del equipo
+// del cliente a la web del fabricante y necesita internet, así que conviene
+// que sea una acción explícita del técnico.
+async function consultarGarantia() {
+  const btn = document.getElementById("warranty-btn");
+  const status = document.getElementById("warranty-status");
+  const equipo = document.getElementById("specs-equipo");
+  btn.disabled = true;
+  status.textContent = "Consultando al fabricante…";
+  try {
+    const params = new URLSearchParams({ serial: currentSerial || "", manufacturer: currentManufacturer || "" });
+    const res = await fetch(`/api/warranty?${params}`);
+    const d = await res.json();
+    if (!d.available) {
+      status.textContent = d.reason || "No se pudo consultar la garantía.";
+      return;
+    }
+    status.textContent = "";
+    const estado = d.in_warranty ? "En garantía" : "Fuera de garantía";
+    const restante = d.remaining_days > 0 ? ` — quedan ${d.remaining_days} días` : "";
+    equipo.appendChild(identityField("Garantía", `${estado}${restante}`));
+    if (d.type) equipo.appendChild(identityField("Tipo de garantía", `${d.type}${d.service ? ` (${d.service})` : ""}`));
+    if (d.start_date || d.end_date) {
+      equipo.appendChild(identityField("Vigencia", `${d.start_date || "?"} → ${d.end_date || "?"}`));
+    }
+    if (d.build_date) equipo.appendChild(identityField("Fecha de fabricación", d.build_date));
+    if (d.product_name) equipo.appendChild(identityField("Modelo según fabricante", d.product_name));
+  } catch (e) {
+    status.textContent = "No se pudo conectar con la app.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById("warranty-btn").addEventListener("click", consultarGarantia);
 document.getElementById("specs-export-btn").addEventListener("click", exportSpecsPng);
 
 const filterOnlyProblems = document.getElementById("filter-only-problems");

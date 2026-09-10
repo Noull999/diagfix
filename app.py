@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from checks import actions, correlate, disk_actions, disks, history, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, updater, win11_readiness
+from checks import actions, correlate, disk_actions, disks, history, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, updater, warranty, win11_readiness
 from checks import system_info as system_info_check
 
 BASE_DIR = Path(__file__).parent
@@ -78,6 +78,28 @@ def identity():
 @app.get("/api/win11-readiness")
 def win11_readiness_endpoint():
     return win11_readiness.check_windows11_readiness()
+
+
+@app.get("/api/warranty")
+def warranty_endpoint(request: Request, serial: str = "", manufacturer: str = ""):
+    """Consulta la garantia contra la pagina del fabricante. Va a pedido (no
+    al cargar la ficha) porque manda el numero de serie del equipo del
+    cliente a un tercero y necesita internet: mejor que sea una accion
+    explicita del tecnico y no algo que pase solo en cada arranque.
+
+    Serial y fabricante llegan como parametros porque la ficha ya los tiene
+    cargados; volver a pedirlos aca costaria otra consulta completa de
+    identidad (~3s) para obtener dos datos que el navegador ya conoce. Solo
+    se usan para armar el cuerpo JSON del pedido al fabricante, nunca tocan
+    el sistema de archivos ni una shell."""
+    if not _same_origin(request):
+        return JSONResponse({"available": False, "reason": "Origen no permitido."}, status_code=403)
+    if not serial:
+        identidad = system_info_check.get_identity()
+        if not identidad.get("available"):
+            return {"available": False, "reason": "No se pudo leer la identificacion del equipo."}
+        serial, manufacturer = identidad.get("serial"), identidad.get("manufacturer")
+    return warranty.lookup(serial, manufacturer)
 
 
 @app.get("/api/update/check")
