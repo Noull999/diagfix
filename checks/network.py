@@ -16,6 +16,7 @@ import time
 
 from .base import result as _result
 from .base import run as _run
+from .base import run_parallel as _run_parallel
 from .base import run_powershell as _run_powershell
 
 TIMEOUT = 5
@@ -252,11 +253,11 @@ def check_network_config():
 
 
 def run_all():
-    return [
-        check_internet(), check_dns(), check_gateway(), check_wifi_signal(),
-        check_network_config(), check_link_speed(), check_network_profile(),
-        check_internet_speed(),
-    ]
+    return _run_parallel([
+        check_internet, check_dns, check_gateway, check_wifi_signal,
+        check_network_config, check_link_speed, check_network_profile,
+        check_internet_speed,
+    ])
 
 
 _LINK_SPEED_SCRIPT = r"""

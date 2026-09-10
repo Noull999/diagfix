@@ -10,6 +10,7 @@ import platform
 import ssl
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -152,6 +153,21 @@ def windows_ssl_context() -> ssl.SSLContext:
                 except ssl.SSLError:
                     pass  # certificado repetido o inválido: se ignora, no es fatal.
     return ctx
+
+
+def run_parallel(funcs):
+    """Ejecuta una lista de funciones sin argumentos en paralelo, preservando
+    el orden de salida. Cada chequeo es independiente (ninguno usa el
+    resultado de otro) y casi todo el tiempo lo pasan esperando un
+    subprocess o una conexión de red, no CPU — por eso el `run_all()` de
+    cada módulo corría 8-10 chequeos uno detrás del otro dejando el tiempo
+    total atado al que sumaban todos, en vez de al más lento del grupo.
+    """
+    if not funcs:
+        return []
+    with ThreadPoolExecutor(max_workers=len(funcs)) as pool:
+        futures = [pool.submit(fn) for fn in funcs]
+        return [f.result() for f in futures]
 
 
 def result(name, status, value, message, causes=None, fix=None, action_id=None):

@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover
 
 from .base import result as _result
 from .base import run as _run
+from .base import run_parallel as _run_parallel
 from .base import run_powershell as _run_powershell
 
 _SMART_SCRIPT = r"""
@@ -345,7 +346,9 @@ def ethernet_live_stream(duration_seconds=600, interval_seconds=2):
 
 
 _USB_LIVE_SCRIPT = r"""
-$d = @(Get-PnpDevice -Class USB -Status OK -ErrorAction SilentlyContinue | ForEach-Object { $_.FriendlyName })
+$d = @(Get-PnpDevice -Class USB -Status OK -ErrorAction SilentlyContinue |
+    Where-Object { $_.InstanceId -notlike 'PCI\*' -and $_.Service -notin @('USBHUB', 'USBHUB3', 'USBHUB30') } |
+    ForEach-Object { $_.FriendlyName })
 ConvertTo-Json -InputObject ([ordered]@{ count = $d.Count; names = $d }) -Compress -Depth 3
 """.strip()
 
@@ -353,7 +356,16 @@ ConvertTo-Json -InputObject ([ordered]@{ count = $d.Count; names = $d }) -Compre
 def usb_live_snapshot():
     """Cantidad de dispositivos USB activos, para insertar algo puerto por
     puerto y ver el contador subir — sin tener que abrir el Administrador
-    de dispositivos entre cada prueba."""
+    de dispositivos entre cada prueba.
+
+    `Get-PnpDevice -Class USB` sin filtrar también trae los controladores de
+    host (bus PCI, siempre presentes) y los concentradores raíz (uno por
+    controlador, también siempre presentes) — en cualquier equipo eso ya
+    suma 4+ "dispositivos" sin haber conectado nada, dando un número
+    inflado. Se excluyen por `InstanceId` (los controladores cuelgan del
+    bus PCI, no del USB) y por `Service` (los hubs corren `USBHUB*`),
+    dejando solo los periféricos reales.
+    """
     output = _run_powershell(_USB_LIVE_SCRIPT, timeout=10)
     if not output:
         return {"available": False}
@@ -374,23 +386,29 @@ def usb_live_stream(duration_seconds=600, interval_seconds=2):
 
 
 _MONITOR_LIVE_SCRIPT = r"""
-$m = @(Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBasicDisplayParams -ErrorAction SilentlyContinue)
-ConvertTo-Json -InputObject ([ordered]@{ count = $m.Count }) -Compress
+Add-Type -AssemblyName System.Windows.Forms
+[int][System.Windows.Forms.Screen]::AllScreens.Count
 """.strip()
 
 
 def monitor_output_live_snapshot():
     """Cantidad de monitores detectados, para conectar un cable HDMI/DP
     externo y ver el contador subir — confirma que el puerto de salida de
-    video funciona sin instalar nada."""
+    video funciona sin instalar nada.
+
+    `WmiMonitorBasicDisplayParams` (root\\wmi) lee el EDID que el driver de
+    monitor cacheó al cargar, y en la práctica no se actualiza sola al
+    conectar/desconectar un cable en caliente — quedaba pegada en el número
+    de arranque. `Screen.AllScreens` (.NET) refleja la lista de pantallas
+    activas que Windows ya re-enumeró, que es lo que realmente cambia al
+    conectar un segundo monitor.
+    """
     output = _run_powershell(_MONITOR_LIVE_SCRIPT, timeout=10)
-    if not output:
-        return {"available": False}
     try:
-        data = json.loads(output)
-    except (json.JSONDecodeError, ValueError):
+        count = int((output or "").strip())
+    except ValueError:
         return {"available": False}
-    return {"available": True, "count": data.get("count", 0)}
+    return {"available": True, "count": count}
 
 
 def monitor_output_live_stream(duration_seconds=600, interval_seconds=2):
@@ -569,11 +587,11 @@ def check_reliability_index():
 
 
 def run_all():
-    checks = [
-        check_disk_space(), check_disk_health(), check_disk_smart(), check_ram(), check_cpu(),
-        check_temperatures(), check_power_plan(), check_uptime(), check_reliability_index(),
-    ]
-    battery = check_battery_health()
-    if battery is not None:
-        checks.append(battery)
-    return checks
+    checks = _run_parallel([
+        check_disk_space, check_disk_health, check_disk_smart, check_ram, check_cpu,
+        check_temperatures, check_power_plan, check_uptime, check_reliability_index,
+        check_battery_health,
+    ])
+    # check_battery_health() da None en un equipo de escritorio (sin
+    # batería) — se filtra después de correr todo en paralelo, no antes.
+    return [c for c in checks if c is not None]

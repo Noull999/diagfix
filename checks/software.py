@@ -8,6 +8,7 @@ from datetime import datetime
 
 from .base import result as _result
 from .base import run as _run
+from .base import run_parallel as _run_parallel
 from .base import run_powershell as _run_powershell
 
 if platform.system() == "Windows":
@@ -453,18 +454,18 @@ def check_time_sync():
 
 
 def run_all():
-    return [
-        check_pending_reboot(),
-        check_last_update(),
-        check_event_log_errors(),
-        check_startup_items(),
-        check_bsod(),
-        check_defender_firewall(),
-        check_error_devices(),
-        check_print_spooler(),
-        check_bitlocker(),
-        check_time_sync(),
-    ]
+    return _run_parallel([
+        check_pending_reboot,
+        check_last_update,
+        check_event_log_errors,
+        check_startup_items,
+        check_bsod,
+        check_defender_firewall,
+        check_error_devices,
+        check_print_spooler,
+        check_bitlocker,
+        check_time_sync,
+    ])
 
 
 def run_sfc_scan():

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=38" />
+<link rel="stylesheet" href="/static/style.css?v=39" />
 </head>
 <body>
   <header class="topbar">
@@ -26,8 +26,8 @@
   <div class="app-shell">
     <nav class="sidebar" aria-label="Secciones de DiagFix">
       <p class="nav-group-title">Diagnóstico</p>
-      <button class="tab-btn active" data-tab="tab-diagnostico"><span class="nav-icon">⊙</span>Diagnóstico</button>
-      <button class="tab-btn" data-tab="tab-especificaciones"><span class="nav-icon">▣</span>Especificaciones</button>
+      <button class="tab-btn active" data-tab="tab-especificaciones"><span class="nav-icon">▣</span>Especificaciones</button>
+      <button class="tab-btn" data-tab="tab-diagnostico"><span class="nav-icon">⊙</span>Diagnóstico</button>
       <button class="tab-btn" data-tab="tab-monitoreo"><span class="nav-icon">∿</span>Monitoreo</button>
       <button class="tab-btn" data-tab="tab-discos"><span class="nav-icon">⛁</span>Discos</button>
 
@@ -44,7 +44,7 @@
 
     <main>
       <!-- ============================== DIAGNÓSTICO ============================== -->
-      <div id="tab-diagnostico" class="tab-panel">
+      <div id="tab-diagnostico" class="tab-panel" hidden>
         <section class="card hero" aria-label="Estado general del equipo">
           <div class="gauge-wrap">
             <svg class="gauge" viewBox="0 0 120 120" role="img" aria-labelledby="gauge-title">
@@ -87,7 +87,7 @@
       </div>
 
       <!-- ============================== ESPECIFICACIONES ============================== -->
-      <div id="tab-especificaciones" class="tab-panel" hidden>
+      <div id="tab-especificaciones" class="tab-panel">
         <section id="specs-empty" class="card">
           <p class="card-desc" style="margin:0;">Ejecutá un diagnóstico para ver la ficha del equipo.</p>
         </section>
@@ -476,6 +476,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=38"></script>
+  <script src="/static/script.js?v=39"></script>
 </body>
 </html>
