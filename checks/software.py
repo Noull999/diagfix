@@ -4,25 +4,62 @@ import platform
 import socket
 import struct
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from .base import result as _result
 from .base import run as _run
-from .base import run_parallel as _run_parallel
 from .base import run_powershell as _run_powershell
 
 if platform.system() == "Windows":
     import winreg
 
-_BSOD_SCRIPT = r"""
-$dumps = Get-ChildItem -Path "$env:SystemRoot\Minidump" -Filter *.dmp -ErrorAction SilentlyContinue
-$dumpCount = if ($dumps) { ($dumps | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) }).Count } else { 0 }
-$kp41 = 0
+# Últimas actualizaciones + errores del visor de eventos + BSOD/apagones +
+# dispositivos con error + servicio de impresión, en un solo script — cada
+# uno por separado tarda poco (0.2-1.1s) pero suma 5 procesos de PowerShell
+# lanzados a la vez; en Windows lanzar muchos procesos en paralelo tiene
+# contención real (medido: 5 en paralelo ~1.1s, 20 en paralelo ~3.3s), así
+# que agruparlos en un solo proceso ahorra ese overhead sin serializar nada
+# que sea lento de verdad (eso se deja aparte: Defender y BitLocker).
+_SOFTWARE_FAST_BATCH_SCRIPT = r"""
+$result = [ordered]@{}
+
 try {
-    $kp41 = (Get-WinEvent -FilterHashtable @{LogName="System";ProviderName="Microsoft-Windows-Kernel-Power";Id=41;StartTime=(Get-Date).AddDays(-7)} -ErrorAction Stop | Measure-Object).Count
-} catch {}
-[ordered]@{ dumps30d = $dumpCount; kernelPower41_7d = $kp41 } | ConvertTo-Json -Compress
+    $hf = Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 1 -ExpandProperty InstalledOn
+    $result.lastUpdate = if ($hf) { $hf.ToString('yyyy-MM-dd') } else { $null }
+} catch { $result.lastUpdate = $null }
+
+try {
+    $result.eventLogCount = (Get-WinEvent -FilterHashtable @{LogName='System';Level=2;StartTime=(Get-Date).AddHours(-24)} -ErrorAction Stop | Measure-Object).Count
+} catch {
+    if ($_.Exception.Message -match 'No events|No se encontraron') { $result.eventLogCount = 0 } else { $result.eventLogCount = $null }
+}
+
+$dumps = Get-ChildItem -Path "$env:SystemRoot\Minidump" -Filter *.dmp -ErrorAction SilentlyContinue
+$result.dumps30d = if ($dumps) { @($dumps | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) }).Count } else { 0 }
+try {
+    $result.kernelPower41_7d = (Get-WinEvent -FilterHashtable @{LogName="System";ProviderName="Microsoft-Windows-Kernel-Power";Id=41;StartTime=(Get-Date).AddDays(-7)} -ErrorAction Stop | Measure-Object).Count
+} catch { $result.kernelPower41_7d = 0 }
+
+$result.errorDevices = @(Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+    Where-Object { $_.ConfigManagerErrorCode -and $_.ConfigManagerErrorCode -ne 0 } |
+    Select-Object Name, ConfigManagerErrorCode)
+
+$result.spoolerStatus = [string](Get-Service -Name Spooler -ErrorAction SilentlyContinue).Status
+
+$result | ConvertTo-Json -Compress -Depth 4
 """.strip()
+
+
+def _software_fast_batch():
+    output = _run_powershell(_SOFTWARE_FAST_BATCH_SCRIPT, timeout=25)
+    if not output:
+        return {}
+    try:
+        return json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
 
 _DEFENDER_SCRIPT = r"""
 $mp = Get-MpComputerStatus -ErrorAction SilentlyContinue
@@ -33,13 +70,6 @@ $fw = Get-NetFirewallProfile -ErrorAction SilentlyContinue
     sigAgeDays = if ($mp) { $mp.AntivirusSignatureAge } else { $null }
     fwAllOn   = if ($fw) { -not ($fw | Where-Object { -not $_.Enabled }) } else { $null }
 } | ConvertTo-Json -Compress
-""".strip()
-
-_DEVICES_SCRIPT = r"""
-Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
-    Where-Object { $_.ConfigManagerErrorCode -and $_.ConfigManagerErrorCode -ne 0 } |
-    Select-Object Name, ConfigManagerErrorCode |
-    ConvertTo-Json -Compress
 """.strip()
 
 # Códigos de Win32_PnPEntity.ConfigManagerErrorCode — estables desde Windows
@@ -86,7 +116,6 @@ def _device_error_detail(code):
         return f"{label} (código {code})"
     return f"código de error {code}"
 
-_SPOOLER_SCRIPT = "(Get-Service -Name Spooler -ErrorAction SilentlyContinue).Status"
 
 _BITLOCKER_SCRIPT = r"""
 try {
@@ -144,21 +173,18 @@ def check_pending_reboot():
     return _result("Reinicio pendiente", "ok", "No", "No hay reinicios pendientes.")
 
 
-def check_last_update():
+def check_last_update(batch=None):
     """Consulta la fecha de la última actualización de Windows instalada.
 
-    Se le pide a PowerShell que formatee la fecha (ISO, sin nombre de día ni
-    mes en el idioma del sistema) para no depender de `strptime` sobre texto
-    localizado — antes fallaba con "unknown" porque `Get-HotFix` devuelve
-    fechas tipo "Wednesday, August 12, 2026 12:00:00 AM".
+    El dato viene del script combinado (`_software_fast_batch`), que ya
+    formatea la fecha en ISO (sin nombre de día ni mes en el idioma del
+    sistema) para no depender de `strptime` sobre texto localizado — antes
+    fallaba con "unknown" porque `Get-HotFix` devuelve fechas tipo
+    "Wednesday, August 12, 2026 12:00:00 AM".
     """
     if platform.system() != "Windows":
         return _result("Últimas actualizaciones", "unknown", None, "Chequeo disponible solo en Windows.")
-    output = _run_powershell(
-        "Get-HotFix | Sort-Object InstalledOn -Descending | "
-        "Select-Object -First 1 -ExpandProperty InstalledOn | "
-        "ForEach-Object { $_.ToString('yyyy-MM-dd') }"
-    )
+    output = (batch or {}).get("lastUpdate")
     if not output:
         return _result("Últimas actualizaciones", "unknown", None,
                         "No se pudo obtener el historial de actualizaciones.")
@@ -184,7 +210,7 @@ def check_last_update():
     return _result("Últimas actualizaciones", "ok", f"hace {days_ago} días", "Actualizaciones al día.")
 
 
-def check_event_log_errors():
+def check_event_log_errors(batch=None):
     """Cuenta errores del Visor de Eventos (log System) en las últimas 24 horas.
 
     Distingue explícitamente "no se pudo consultar" (sin permisos, servicio
@@ -194,22 +220,10 @@ def check_event_log_errors():
     if platform.system() != "Windows":
         return _result("Errores en el registro de eventos (24h)", "unknown", None,
                         "Chequeo disponible solo en Windows.")
-    output = _run_powershell(
-        "try { "
-        "(Get-WinEvent -FilterHashtable @{LogName='System';Level=2;StartTime=(Get-Date).AddHours(-24)} "
-        "-ErrorAction Stop | Measure-Object).Count "
-        "} catch [Exception] { "
-        "if ($_.Exception.Message -match 'No events|No se encontraron') { 0 } else { 'ERROR' } "
-        "}"
-    )
-    if output is None or output == "" or output == "ERROR":
+    count = (batch or {}).get("eventLogCount")
+    if count is None:
         return _result("Errores en el registro de eventos (24h)", "unknown", None,
                         "No se pudo consultar el registro de eventos (puede requerir permisos de administrador).")
-    try:
-        count = int(output)
-    except ValueError:
-        return _result("Errores en el registro de eventos (24h)", "unknown", None,
-                        "No se pudo leer el registro de eventos (puede requerir permisos de administrador).")
     causes = ["Driver con fallas o desactualizado", "Un servicio que falla al iniciar", "Hardware con problemas intermitentes", "Archivos de sistema corruptos"]
     fix = [
         "Abre el Visor de Eventos (eventvwr.msc) y revisa el detalle de los errores más frecuentes.",
@@ -251,21 +265,16 @@ def check_startup_items():
     return _result("Programas de inicio", "ok", str(total), "Cantidad normal de programas de inicio.")
 
 
-def check_bsod():
+def check_bsod(batch=None):
     """Cuenta pantallazos azules recientes: minidumps (30 días) y eventos
     Kernel-Power ID 41 (7 días, apagones/reinicios inesperados no
     controlados). No requiere permisos de administrador."""
     if platform.system() != "Windows":
         return _result("Pantallazos azules / reinicios inesperados", "unknown", None, "Chequeo disponible solo en Windows.")
-    output = _run_powershell(_BSOD_SCRIPT, timeout=20)
-    if not output:
+    if not batch or batch.get("dumps30d") is None:
         return _result("Pantallazos azules / reinicios inesperados", "unknown", None, "No se pudo consultar.")
-    try:
-        data = json.loads(output)
-    except (json.JSONDecodeError, ValueError):
-        return _result("Pantallazos azules / reinicios inesperados", "unknown", None, "No se pudo interpretar la respuesta.")
-    dumps = data.get("dumps30d") or 0
-    kp41 = data.get("kernelPower41_7d") or 0
+    dumps = batch.get("dumps30d") or 0
+    kp41 = batch.get("kernelPower41_7d") or 0
     causes = ["Driver con fallas (video, red, chipset)", "Sobrecalentamiento o fuente de poder insuficiente", "Módulo de RAM defectuoso", "Archivos de sistema corruptos"]
     fix = [
         "Actualiza los drivers, en especial el de video y chipset, desde el sitio del fabricante.",
@@ -330,7 +339,7 @@ def check_defender_firewall():
     return _result("Antivirus y firewall", "ok", "Activo", "Protección en tiempo real y firewall activos.")
 
 
-def check_error_devices():
+def check_error_devices(batch=None):
     """Dispositivos con error en el Administrador de dispositivos. A
     diferencia de solo listar el nombre, acá se traduce el
     ConfigManagerErrorCode (1-49, estable desde Windows XP) a texto — para
@@ -338,16 +347,9 @@ def check_error_devices():
     qué ese dispositivo en particular quedó marcado con la advertencia."""
     if platform.system() != "Windows":
         return _result("Dispositivos con error", "unknown", None, "Chequeo disponible solo en Windows.")
-    output = _run_powershell(_DEVICES_SCRIPT, timeout=15)
-    if output is None:
+    if not batch or "errorDevices" not in batch:
         return _result("Dispositivos con error", "unknown", None, "No se pudo consultar.")
-    output = output.strip()
-    if not output:
-        return _result("Dispositivos con error", "ok", "0", "Ningún dispositivo reporta error.")
-    try:
-        data = json.loads(output)
-    except (json.JSONDecodeError, ValueError):
-        return _result("Dispositivos con error", "unknown", None, "No se pudo interpretar la respuesta.")
+    data = batch.get("errorDevices") or []
     if isinstance(data, dict):
         data = [data]
 
@@ -370,13 +372,12 @@ def check_error_devices():
     )
 
 
-def check_print_spooler():
+def check_print_spooler(batch=None):
     """Estado del servicio de cola de impresión (clásico de tickets de
     'no puedo imprimir')."""
     if platform.system() != "Windows":
         return _result("Servicio de impresión", "unknown", None, "Chequeo disponible solo en Windows.")
-    status = _run_powershell(_SPOOLER_SCRIPT, timeout=10)
-    status = (status or "").strip()
+    status = ((batch or {}).get("spoolerStatus") or "").strip()
     if not status:
         return _result("Servicio de impresión", "unknown", None, "No se detectó el servicio Spooler.")
     if status.lower() != "running":
@@ -454,18 +455,27 @@ def check_time_sync():
 
 
 def run_all():
-    return _run_parallel([
-        check_pending_reboot,
-        check_last_update,
-        check_event_log_errors,
-        check_startup_items,
-        check_bsod,
-        check_defender_firewall,
-        check_error_devices,
-        check_print_spooler,
-        check_bitlocker,
-        check_time_sync,
-    ])
+    # check_last_update/event_log_errors/bsod/error_devices/print_spooler
+    # comparten un solo proceso de PowerShell (_software_fast_batch) en vez
+    # de uno cada uno — por eso van aparte del resto en vez de usar
+    # run_parallel con la lista plana de siempre: necesitan esperar ese
+    # resultado compartido, que a su vez corre en paralelo con los chequeos
+    # lentos (Defender, BitLocker) para no sumarle tiempo al total.
+    with ThreadPoolExecutor(max_workers=11) as pool:
+        batch_f = pool.submit(_software_fast_batch)
+        futures = [
+            pool.submit(check_pending_reboot),
+            pool.submit(lambda: check_last_update(batch_f.result())),
+            pool.submit(lambda: check_event_log_errors(batch_f.result())),
+            pool.submit(check_startup_items),
+            pool.submit(lambda: check_bsod(batch_f.result())),
+            pool.submit(check_defender_firewall),
+            pool.submit(lambda: check_error_devices(batch_f.result())),
+            pool.submit(lambda: check_print_spooler(batch_f.result())),
+            pool.submit(check_bitlocker),
+            pool.submit(check_time_sync),
+        ]
+        return [f.result() for f in futures]
 
 
 def run_sfc_scan():

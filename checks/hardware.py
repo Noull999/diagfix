@@ -4,6 +4,7 @@ import platform
 import re
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 try:
@@ -13,7 +14,6 @@ except ImportError:  # pragma: no cover
 
 from .base import result as _result
 from .base import run as _run
-from .base import run_parallel as _run_parallel
 from .base import run_powershell as _run_powershell
 
 _SMART_SCRIPT = r"""
@@ -511,17 +511,49 @@ def check_temperatures():
     return _result("Temperaturas", "ok", value, "Temperaturas dentro de rango normal.")
 
 
-def check_power_plan():
+# Plan de energía + tiempo encendido + índice de confiabilidad, en un solo
+# script — cada uno por separado es rápido (0.2-0.5s) pero son 3 procesos de
+# PowerShell más sumados a los demás; agruparlos ahorra ese overhead de
+# lanzamiento sin afectar a los chequeos que sí son lentos de verdad (disco,
+# S.M.A.R.T., temperaturas), que se dejan aparte.
+_HARDWARE_FAST_BATCH_SCRIPT = r"""
+$result = [ordered]@{}
+
+try {
+    $g = (powercfg /getactivescheme)
+    $result.powerPlan = if ($g -match '\(([^)]+)\)') { $matches[1] } else { $null }
+} catch { $result.powerPlan = $null }
+
+try {
+    $result.uptimeHours = ((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalHours
+} catch { $result.uptimeHours = $null }
+
+try {
+    $result.reliabilityIndex = (Get-CimInstance Win32_ReliabilityStabilityMetrics -ErrorAction Stop |
+        Sort-Object TimeGenerated -Descending | Select-Object -First 1 -ExpandProperty SystemStabilityIndex)
+} catch { $result.reliabilityIndex = $null }
+
+$result | ConvertTo-Json -Compress -Depth 4
+""".strip()
+
+
+def _hardware_fast_batch():
+    output = _run_powershell(_HARDWARE_FAST_BATCH_SCRIPT, timeout=25)
+    if not output:
+        return {}
+    try:
+        return json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+def check_power_plan(batch=None):
     """Plan de energía activo. 'Economizador de energía' limita la frecuencia
     del CPU incluso con el equipo enchufado — un clásico de "esta notebook
     anda lenta" que se soluciona sin tocar hardware."""
     if platform.system() != "Windows":
         return _result("Plan de energía", "unknown", None, "Chequeo disponible solo en Windows.")
-    output = _run_powershell(
-        r"$g = (powercfg /getactivescheme); if ($g -match '\(([^)]+)\)') { $matches[1] }",
-        timeout=15,
-    )
-    plan = (output or "").strip()
+    plan = ((batch or {}).get("powerPlan") or "").strip()
     if not plan:
         return _result("Plan de energía", "unknown", None, "No se pudo consultar el plan de energía activo.")
     bajo_rendimiento = any(p in plan.lower() for p in ("economizador", "power saver", "battery saver"))
@@ -535,19 +567,14 @@ def check_power_plan():
     return _result("Plan de energía", "ok", plan, "El plan de energía activo no limita el rendimiento.")
 
 
-def check_uptime():
+def check_uptime(batch=None):
     """Días desde el último arranque. Un Windows que no se reinicia hace
     semanas acumula fugas de memoria, actualizaciones pendientes y procesos
     colgados — todo eso se siente como "el equipo cada vez anda más lento"."""
     if platform.system() != "Windows":
         return _result("Tiempo encendido sin reiniciar", "unknown", None, "Chequeo disponible solo en Windows.")
-    output = _run_powershell(
-        "((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalHours",
-        timeout=15,
-    )
-    try:
-        hours = float((output or "").strip())
-    except ValueError:
+    hours = (batch or {}).get("uptimeHours")
+    if hours is None:
         return _result("Tiempo encendido sin reiniciar", "unknown", None, "No se pudo calcular el tiempo de actividad.")
     days = round(hours / 24, 1)
     value = f"{days} días"
@@ -561,20 +588,14 @@ def check_uptime():
     return _result("Tiempo encendido sin reiniciar", "ok", value, "Tiempo de actividad normal.")
 
 
-def check_reliability_index():
+def check_reliability_index(batch=None):
     """Índice de confiabilidad de Windows (0-10): resume crasheos, instalaciones
     fallidas y errores de driver de los últimos días en un solo número, la
     misma fuente que usa el Monitor de confiabilidad (perfmon /rel)."""
     if platform.system() != "Windows":
         return _result("Índice de estabilidad de Windows", "unknown", None, "Chequeo disponible solo en Windows.")
-    output = _run_powershell(
-        "(Get-CimInstance Win32_ReliabilityStabilityMetrics -ErrorAction Stop | "
-        "Sort-Object TimeGenerated -Descending | Select-Object -First 1 -ExpandProperty SystemStabilityIndex)",
-        timeout=20,
-    )
-    try:
-        index = float((output or "").strip())
-    except ValueError:
+    index = (batch or {}).get("reliabilityIndex")
+    if index is None:
         return _result("Índice de estabilidad de Windows", "unknown", None, "No se pudo consultar (puede requerir que el equipo lleve más tiempo encendido).")
     value = f"{round(index, 1)}/10"
     causes = ["Crasheos o cierres inesperados de programas recientes", "Instalaciones o desinstalaciones fallidas", "Drivers que fallan al cargar"]
@@ -587,11 +608,24 @@ def check_reliability_index():
 
 
 def run_all():
-    checks = _run_parallel([
-        check_disk_space, check_disk_health, check_disk_smart, check_ram, check_cpu,
-        check_temperatures, check_power_plan, check_uptime, check_reliability_index,
-        check_battery_health,
-    ])
+    # check_power_plan/uptime/reliability_index comparten un solo proceso de
+    # PowerShell (_hardware_fast_batch) — mismo motivo que en software.py:
+    # esperan ese resultado compartido, que corre en paralelo con el resto.
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        batch_f = pool.submit(_hardware_fast_batch)
+        futures = [
+            pool.submit(check_disk_space),
+            pool.submit(check_disk_health),
+            pool.submit(check_disk_smart),
+            pool.submit(check_ram),
+            pool.submit(check_cpu),
+            pool.submit(check_temperatures),
+            pool.submit(lambda: check_power_plan(batch_f.result())),
+            pool.submit(lambda: check_uptime(batch_f.result())),
+            pool.submit(lambda: check_reliability_index(batch_f.result())),
+            pool.submit(check_battery_health),
+        ]
+        checks = [f.result() for f in futures]
     # check_battery_health() da None en un equipo de escritorio (sin
     # batería) — se filtra después de correr todo en paralelo, no antes.
     return [c for c in checks if c is not None]
