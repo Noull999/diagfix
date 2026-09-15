@@ -252,12 +252,32 @@ async function loadIdentity() {
       data.cpu_speed_mhz ? `${data.cpu_speed_mhz} MHz` : null,
     ].filter(Boolean).join(" · ")));
 
-    const primerModulo = (data.ram_modules || [])[0];
+    const ramModules = data.ram_modules || [];
     document.getElementById("specs-componentes-ram-value").textContent =
       data.ram_total_gb != null ? `${data.ram_total_gb} GB` : "—";
+    // Antes solo se mostraba el primer módulo acá — si el equipo tiene 2+
+    // módulos distintos (capacidad o velocidad distinta), el segundo quedaba
+    // invisible en este panel y solo aparecía en la tabla de abajo.
+    const modulosIguales = ramModules.length > 1 && ramModules.every((m) =>
+      m.capacity_gb === ramModules[0].capacity_gb && m.type === ramModules[0].type && m.speed_mhz === ramModules[0].speed_mhz
+    );
+    let ramResumen = null;
+    if (ramModules.length === 1 || modulosIguales) {
+      const m = ramModules[0];
+      if (m) {
+        ramResumen = [
+          ramModules.length > 1 ? `${ramModules.length}x ${m.capacity_gb ?? "?"}GB` : null,
+          m.type,
+          m.speed_mhz ? `${m.speed_mhz} MHz` : null,
+        ].filter(Boolean).join(" ");
+      }
+    } else if (ramModules.length > 1) {
+      ramResumen = ramModules.map((m) => [
+        m.capacity_gb != null ? `${m.capacity_gb}GB` : null, m.type, m.speed_mhz ? `${m.speed_mhz}MHz` : null,
+      ].filter(Boolean).join(" ")).join(" + ");
+    }
     document.getElementById("specs-componentes-ram-detail").textContent = [
-      primerModulo?.type,
-      primerModulo?.speed_mhz ? `${primerModulo.speed_mhz} MHz` : null,
+      ramResumen,
       data.ram_slots_used != null ? `${data.ram_slots_used}/${data.ram_slots_total ?? "?"} slots` : null,
     ].filter(Boolean).join(" · ") || "—";
 

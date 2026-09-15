@@ -17,12 +17,25 @@ from .base import run_powershell as _run_powershell
 _LIST_SCRIPT = r"""
 $sysDiskNumber = (Get-Partition -DriveLetter ($env:SystemDrive.TrimEnd(":")) -ErrorAction SilentlyContinue).DiskNumber
 $disks = Get-Disk -ErrorAction SilentlyContinue
+
+# El DeviceId de Get-PhysicalDisk no siempre coincide con el Number de
+# Get-Disk (dependen de subsistemas de almacenamiento distintos) — se arma
+# una sola vez un diccionario por FriendlyName en vez de pedir el contador
+# de cada disco por su Number, que en algunos equipos no matchea ningun
+# disco o matchea de mas y rompe el listado completo.
+$relByName = @{}
+try {
+    Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
+        $counter = $_ | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
+        if ($counter -and -not $relByName.ContainsKey($_.FriendlyName)) { $relByName[$_.FriendlyName] = $counter }
+    }
+} catch {}
+
 $out = @()
 foreach ($d in $disks) {
     $parts = Get-Partition -DiskNumber $d.Number -ErrorAction SilentlyContinue
     $partList = @()
-    $rel = $null
-    try { $rel = Get-PhysicalDisk -DeviceId $d.Number -ErrorAction Stop | Get-StorageReliabilityCounter -ErrorAction Stop } catch {}
+    $rel = $relByName[$d.FriendlyName]
     foreach ($p in $parts) {
         $vol = $null
         if ($p.DriveLetter) { $vol = Get-Volume -DriveLetter $p.DriveLetter -ErrorAction SilentlyContinue }
@@ -74,9 +87,21 @@ def list_disks():
     return {"available": True, "message": None, "disks": disks}
 
 
+def _as_number(value):
+    """PowerShell puede devolver una lista de un elemento en vez de un
+    escalar en casos raros (ej. un disco detrás de más de un adaptador) —
+    se toma el primer valor en vez de dejar que rompa la comparación."""
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return value if isinstance(value, (int, float)) else None
+
+
 def _smart_verdict(wear, read_errors, write_errors):
     """Mismos umbrales que `hardware.check_disk_smart()`, para que la
     pestaña Discos y el chequeo de Diagnóstico nunca queden en desacuerdo."""
+    wear = _as_number(wear)
+    read_errors = _as_number(read_errors)
+    write_errors = _as_number(write_errors)
     if (read_errors or 0) > 0 or (write_errors or 0) > 0:
         return "critical"
     if wear is not None and wear > 90:
