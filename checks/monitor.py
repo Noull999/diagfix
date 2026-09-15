@@ -8,6 +8,7 @@ proceso en 60s y no depende del idioma de la salida de `ping`.
 """
 import json
 import socket
+import threading
 import time
 
 try:
@@ -21,10 +22,13 @@ DURATION_SECONDS = 60
 INTERVAL_SECONDS = 2
 PING_HOST = ("8.8.8.8", 53)
 # Leer temperatura implica lanzar un proceso de PowerShell (a diferencia de
-# CPU%/RAM%, que psutil da gratis) — a 1 tick cada 2s serían ~30 procesos en
-# 60s. Se muestrea 1 de cada 3 ticks (~cada 6s) y se repite el último valor
-# conocido en los ticks intermedios.
-TEMP_SAMPLE_EVERY = 3
+# CPU%/RAM%, que psutil da gratis), y en equipos con antivirus agresivo ese
+# proceso puede tardar varios segundos en arrancar. Se corre en un hilo
+# aparte que refresca el valor cada TEMP_REFRESH_SECONDS: el bucle principal
+# nunca espera a que termine, solo lee el último valor disponible — así una
+# consulta lenta demora la temperatura mostrada, pero no congela el resto
+# del monitoreo (CPU/RAM/red/latencia siguen a su propio ritmo de 2s).
+TEMP_REFRESH_SECONDS = 10
 
 
 def _tcp_latency_ms(host=PING_HOST, timeout=1.0):
@@ -82,28 +86,46 @@ def stream_ticks():
     prev_time = time.time()
     time.sleep(INTERVAL_SECONDS)
 
-    last_temps = {"cpu_c": None, "disk_c": None}
-    ticks = DURATION_SECONDS // INTERVAL_SECONDS
-    for tick in range(ticks):
-        if tick % TEMP_SAMPLE_EVERY == 0:
-            last_temps = _read_temperatures() or last_temps
-        now = time.time()
-        net = psutil.net_io_counters()
-        elapsed = now - prev_time
-        sent_kbps = round((net.bytes_sent - prev_net.bytes_sent) / 1024 / elapsed, 1) if elapsed > 0 else 0
-        recv_kbps = round((net.bytes_recv - prev_net.bytes_recv) / 1024 / elapsed, 1) if elapsed > 0 else 0
-        prev_net, prev_time = net, now
+    temps_box = {"cpu_c": None, "disk_c": None}
+    temps_lock = threading.Lock()
+    stop_temp_thread = threading.Event()
 
-        payload = {
-            "timestamp": time.strftime("%H:%M:%S"),
-            "cpu_percent": psutil.cpu_percent(interval=None),
-            "ram_percent": psutil.virtual_memory().percent,
-            "net_sent_kbps": sent_kbps,
-            "net_recv_kbps": recv_kbps,
-            "latency_ms": _tcp_latency_ms(),
-            "cpu_temp_c": last_temps.get("cpu_c"),
-            "disk_temp_c": last_temps.get("disk_c"),
-            "top_processes": _top_processes(),
-        }
-        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        time.sleep(INTERVAL_SECONDS)
+    def _refresh_temps():
+        while not stop_temp_thread.is_set():
+            temps = _read_temperatures()
+            if temps:
+                with temps_lock:
+                    temps_box.update(temps)
+            stop_temp_thread.wait(TEMP_REFRESH_SECONDS)
+
+    temp_thread = threading.Thread(target=_refresh_temps, daemon=True)
+    temp_thread.start()
+
+    ticks = DURATION_SECONDS // INTERVAL_SECONDS
+    try:
+        for _ in range(ticks):
+            now = time.time()
+            net = psutil.net_io_counters()
+            elapsed = now - prev_time
+            sent_kbps = round((net.bytes_sent - prev_net.bytes_sent) / 1024 / elapsed, 1) if elapsed > 0 else 0
+            recv_kbps = round((net.bytes_recv - prev_net.bytes_recv) / 1024 / elapsed, 1) if elapsed > 0 else 0
+            prev_net, prev_time = net, now
+
+            with temps_lock:
+                cpu_temp, disk_temp = temps_box["cpu_c"], temps_box["disk_c"]
+
+            payload = {
+                "timestamp": time.strftime("%H:%M:%S"),
+                "cpu_percent": psutil.cpu_percent(interval=None),
+                "ram_percent": psutil.virtual_memory().percent,
+                "net_sent_kbps": sent_kbps,
+                "net_recv_kbps": recv_kbps,
+                "latency_ms": _tcp_latency_ms(),
+                "cpu_temp_c": cpu_temp,
+                "disk_temp_c": disk_temp,
+                "top_processes": _top_processes(),
+            }
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            time.sleep(INTERVAL_SECONDS)
+    finally:
+        stop_temp_thread.set()

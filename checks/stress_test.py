@@ -15,6 +15,7 @@ import json
 import os
 import platform
 import subprocess
+import threading
 import time
 
 try:
@@ -29,11 +30,11 @@ from .hardware import read_temperatures as _read_temperatures
 DURATION_SECONDS = 60
 HARD_CAP_SECONDS = 90
 TICK_SECONDS = 2
-# Igual que en monitor.py: leer temperatura implica un proceso de
-# PowerShell aparte, se muestrea 1 de cada 5 ticks (~cada 10s) en vez de
-# cada tick, para no sumarle más procesos a los que ya está generando la
-# propia prueba de estrés.
-TEMP_SAMPLE_EVERY_TICKS = 5
+# Igual que en monitor.py: la temperatura se refresca en un hilo aparte cada
+# TEMP_REFRESH_SECONDS en vez de adentro del bucle principal — una consulta
+# de PowerShell lenta (antivirus agresivo, equipo cargado) no debe congelar
+# los ticks de CPU%/reloj, que son el dato más importante de esta prueba.
+TEMP_REFRESH_SECONDS = 10
 
 _CRITICAL_TEMP_C = 90
 _WARNING_TEMP_C = 80
@@ -132,11 +133,28 @@ def stream_stress(duration_seconds=DURATION_SECONDS):
     _active_processes = _start_load(duration_seconds)
 
     psutil.cpu_percent(interval=None)  # descarta la primera lectura (siempre da 0)
-    max_temp_c = None
     max_cpu_percent = 0
     freq_max_mhz = None
     min_freq_ratio = None
-    last_temps = {"cpu_c": None, "disk_c": None}
+
+    temps_box = {"cpu_c": None, "disk_c": None}
+    temps_lock = threading.Lock()
+    max_temp_holder = {"value": None}
+    stop_temp_thread = threading.Event()
+
+    def _refresh_temps():
+        while not stop_temp_thread.is_set():
+            temps = _read_temperatures()
+            if temps:
+                with temps_lock:
+                    temps_box.update(temps)
+                    cpu_c = temps.get("cpu_c")
+                    if cpu_c is not None:
+                        max_temp_holder["value"] = cpu_c if max_temp_holder["value"] is None else max(max_temp_holder["value"], cpu_c)
+            stop_temp_thread.wait(TEMP_REFRESH_SECONDS)
+
+    temp_thread = threading.Thread(target=_refresh_temps, daemon=True)
+    temp_thread.start()
 
     ticks = duration_seconds // TICK_SECONDS
     try:
@@ -153,11 +171,8 @@ def stream_stress(duration_seconds=DURATION_SECONDS):
                     ratio = freq.current / freq.max
                     min_freq_ratio = ratio if min_freq_ratio is None else min(min_freq_ratio, ratio)
 
-            if tick % TEMP_SAMPLE_EVERY_TICKS == 0:
-                last_temps = _read_temperatures() or last_temps
-            cpu_temp = last_temps.get("cpu_c")
-            if cpu_temp is not None:
-                max_temp_c = cpu_temp if max_temp_c is None else max(max_temp_c, cpu_temp)
+            with temps_lock:
+                cpu_temp = temps_box["cpu_c"]
 
             payload = {
                 "elapsed": (tick + 1) * TICK_SECONDS,
@@ -169,9 +184,10 @@ def stream_stress(duration_seconds=DURATION_SECONDS):
             }
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
     finally:
+        stop_temp_thread.set()
         stop_stress()
 
-    verdict = _build_verdict(max_temp_c, max_cpu_percent, min_freq_ratio)
+    verdict = _build_verdict(max_temp_holder["value"], max_cpu_percent, min_freq_ratio)
     yield f"data: {json.dumps({'done': True, 'result': verdict}, ensure_ascii=False)}\n\n"
 
 
