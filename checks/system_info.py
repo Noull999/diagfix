@@ -63,6 +63,7 @@ if ($physDisks) {
 
 $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
 $cpuName = if ($cpu.Name) { ($cpu.Name -replace '\s+', ' ').Trim() } else { $null }
+$cpuMaxMhz = $cpu.MaxClockSpeed
 
 $gpuInfo = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object {
     [ordered]@{
@@ -106,6 +107,7 @@ $result = [ordered]@{
     serial           = $bios.SerialNumber
     part_number      = $partNumber
     cpu_name         = $cpuName
+    cpu_speed_mhz    = $cpuMaxMhz
     os_caption       = $os.Caption
     os_display_version = $displayVersion
     os_build         = $os.BuildNumber
@@ -232,6 +234,7 @@ def get_identity():
         "serial": data.get("serial"),
         "part_number": data.get("part_number"),
         "cpu_name": data.get("cpu_name"),
+        "cpu_speed_mhz": data.get("cpu_speed_mhz"),
         "os_summary": os_summary,
         "os_build": data.get("os_build"),
         "os_arch": data.get("os_arch"),

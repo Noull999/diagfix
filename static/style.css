@@ -111,6 +111,7 @@ html, body {
 .badge-unknown { color: var(--muted); }
 
 .text-ok { color: var(--ok); font-weight: 600; }
+.text-warning { color: var(--warn); font-weight: 600; }
 .text-critical { color: var(--critical); font-weight: 600; }
 
 /* ---------- Botones ---------- */

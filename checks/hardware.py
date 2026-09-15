@@ -471,22 +471,34 @@ try {
 """.strip()
 
 
+def read_temperatures():
+    """Lectura cruda de temperatura (CPU/disco), sin interpretar. Compartida
+    entre `check_temperatures()` y el monitoreo en vivo (`checks/monitor.py`)
+    para no mantener el mismo script de PowerShell en dos lugares."""
+    if platform.system() != "Windows":
+        return None
+    output = _run_powershell(_TEMP_SCRIPT, timeout=15)
+    if not output:
+        return None
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return {"cpu_c": data.get("cpuC"), "disk_c": data.get("diskC")}
+
+
 def check_temperatures():
     """Temperatura de CPU (zona térmica ACPI) y del disco más caliente (SMART).
     No todos los fabricantes exponen la del CPU por WMI —cuando no está
     disponible, se informa así en vez de mostrar 'unknown' sin explicación."""
     if platform.system() != "Windows":
         return _result("Temperaturas", "unknown", None, "Chequeo disponible solo en Windows.")
-    output = _run_powershell(_TEMP_SCRIPT, timeout=15)
-    if not output:
+    data = read_temperatures()
+    if data is None:
         return _result("Temperaturas", "unknown", None, "No se pudo consultar (requiere permisos de administrador).")
-    try:
-        data = json.loads(output)
-    except (json.JSONDecodeError, ValueError):
-        return _result("Temperaturas", "unknown", None, "No se pudo interpretar la respuesta.")
 
-    cpu_c = data.get("cpuC")
-    disk_c = data.get("diskC")
+    cpu_c = data.get("cpu_c")
+    disk_c = data.get("disk_c")
     if cpu_c is None and disk_c is None:
         return _result(
             "Temperaturas", "unknown", None,

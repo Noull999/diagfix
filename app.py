@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from checks import actions, correlate, disk_actions, disks, history, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, updater, warranty, win11_readiness
+from checks import actions, correlate, disk_actions, disks, history, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, stress_test, updater, warranty, win11_readiness
 from checks import system_info as system_info_check
 
 BASE_DIR = Path(__file__).parent
@@ -575,6 +575,28 @@ def monitor_output_stream(request: Request):
     if not _same_origin(request):
         return JSONResponse({"error": "Origen no permitido."}, status_code=403)
     return StreamingResponse(hardware.monitor_output_live_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/stress/stream")
+def stress_stream(request: Request):
+    """Prueba de estrés CPU/RAM (pestaña Pruebas): satura todos los núcleos
+    y buena parte de la RAM libre por ~60s, mostrando carga/reloj/
+    temperatura en vivo y un veredicto final — para detectar inestabilidad
+    o throttling térmico que un chequeo en reposo no puede ver."""
+    if not _same_origin(request):
+        return JSONResponse({"error": "Origen no permitido."}, status_code=403)
+    return StreamingResponse(stress_test.stream_stress(), media_type="text/event-stream")
+
+
+@app.post("/api/stress/stop")
+def stress_stop(request: Request):
+    """Corta la prueba de estrés de inmediato (botón "Detener"), en vez de
+    esperar a que termine sola — no depende del ciclo de vida de la
+    conexión SSE, que un hilo bloqueado en `time.sleep()` no interrumpe."""
+    if not _same_origin(request):
+        return JSONResponse({"status": "error", "message": "Origen no permitido."}, status_code=403)
+    stress_test.stop_stress()
+    return {"status": "ok"}
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

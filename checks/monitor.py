@@ -15,9 +15,16 @@ try:
 except ImportError:  # pragma: no cover
     psutil = None
 
+from .hardware import read_temperatures as _read_temperatures
+
 DURATION_SECONDS = 60
 INTERVAL_SECONDS = 2
 PING_HOST = ("8.8.8.8", 53)
+# Leer temperatura implica lanzar un proceso de PowerShell (a diferencia de
+# CPU%/RAM%, que psutil da gratis) — a 1 tick cada 2s serían ~30 procesos en
+# 60s. Se muestrea 1 de cada 3 ticks (~cada 6s) y se repite el último valor
+# conocido en los ticks intermedios.
+TEMP_SAMPLE_EVERY = 3
 
 
 def _tcp_latency_ms(host=PING_HOST, timeout=1.0):
@@ -75,8 +82,11 @@ def stream_ticks():
     prev_time = time.time()
     time.sleep(INTERVAL_SECONDS)
 
+    last_temps = {"cpu_c": None, "disk_c": None}
     ticks = DURATION_SECONDS // INTERVAL_SECONDS
-    for _ in range(ticks):
+    for tick in range(ticks):
+        if tick % TEMP_SAMPLE_EVERY == 0:
+            last_temps = _read_temperatures() or last_temps
         now = time.time()
         net = psutil.net_io_counters()
         elapsed = now - prev_time
@@ -91,6 +101,8 @@ def stream_ticks():
             "net_sent_kbps": sent_kbps,
             "net_recv_kbps": recv_kbps,
             "latency_ms": _tcp_latency_ms(),
+            "cpu_temp_c": last_temps.get("cpu_c"),
+            "disk_temp_c": last_temps.get("disk_c"),
             "top_processes": _top_processes(),
         }
         yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"

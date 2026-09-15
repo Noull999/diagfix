@@ -19,6 +19,7 @@ function switchTab(tabId) {
     stopEthernetTest();
     stopUsbTest();
     stopMonitorOutputTest();
+    stopStressTest();
   }
 
   // Algunas secciones se cargan solas al entrar, para no obligar a un clic
@@ -246,7 +247,10 @@ async function loadIdentity() {
     // superior alcance por sí sola, sin bajar a las tablas detalladas.
     const compCpu = document.getElementById("specs-componentes-cpu");
     compCpu.innerHTML = "";
-    compCpu.appendChild(identityField("CPU", data.cpu_name));
+    compCpu.appendChild(identityField("CPU", [
+      data.cpu_name,
+      data.cpu_speed_mhz ? `${data.cpu_speed_mhz} MHz` : null,
+    ].filter(Boolean).join(" · ")));
 
     const primerModulo = (data.ram_modules || [])[0];
     document.getElementById("specs-componentes-ram-value").textContent =
@@ -265,7 +269,11 @@ async function loadIdentity() {
 
     const compGpu = document.getElementById("specs-componentes-gpu");
     compGpu.innerHTML = "";
-    compGpu.appendChild(identityField("GPU", (data.gpus || [])[0]?.name));
+    const primeraGpu = (data.gpus || [])[0];
+    compGpu.appendChild(identityField("GPU", [
+      primeraGpu?.name,
+      primeraGpu?.vram_mb ? `${(primeraGpu.vram_mb / 1024).toFixed(1)} GB VRAM` : null,
+    ].filter(Boolean).join(" · ")));
 
     document.getElementById("specs-ram-summary").textContent =
       data.ram_total_gb != null
@@ -636,6 +644,8 @@ function startMonitor() {
     document.getElementById("monitor-net").textContent = `${data.net_sent_kbps} / ${data.net_recv_kbps} KB/s`;
     document.getElementById("monitor-latency").textContent =
       data.latency_ms != null ? `${data.latency_ms} ms` : "sin respuesta";
+    document.getElementById("monitor-temp").textContent =
+      data.cpu_temp_c != null ? `${data.cpu_temp_c}°C` : "—";
 
     const row = document.createElement("tr");
     [
@@ -645,6 +655,7 @@ function startMonitor() {
       data.net_sent_kbps,
       data.net_recv_kbps,
       data.latency_ms != null ? `${data.latency_ms} ms` : "—",
+      data.cpu_temp_c != null ? `${data.cpu_temp_c}°C` : "—",
     ].forEach((v) => {
       const td = document.createElement("td");
       td.textContent = v;
@@ -1279,6 +1290,20 @@ function renderDiskCard(disk) {
   meta.textContent = `${disk.sizeGB} GB · ${disk.partitionStyle} · ${disk.busType} · Salud: ${disk.healthStatus}`;
   card.appendChild(meta);
 
+  if (disk.smartStatus) {
+    const smart = document.createElement("p");
+    smart.className = "disk-card-meta disk-card-smart";
+    if (disk.smartStatus === "critical") smart.classList.add("text-critical");
+    else if (disk.smartStatus === "warning") smart.classList.add("test-drops-alert");
+    const partes = [];
+    if (disk.wearPct != null) partes.push(`desgaste ${disk.wearPct}%`);
+    if (disk.powerOnHours != null) partes.push(`${disk.powerOnHours} horas encendido`);
+    const errores = (disk.readErrors || 0) + (disk.writeErrors || 0);
+    if (errores > 0) partes.push(`${errores} errores S.M.A.R.T.`);
+    smart.textContent = `S.M.A.R.T.: ${partes.length ? partes.join(" · ") : "sin datos"}`;
+    card.appendChild(smart);
+  }
+
   const table = document.createElement("table");
   table.className = "partition-table";
   table.innerHTML = "<thead><tr><th>Parte</th><th>Letra</th><th>Etiqueta</th><th>Sistema de archivos</th><th>Tamaño</th><th>Libre</th><th>Tipo</th><th>Acciones</th></tr></thead>";
@@ -1841,6 +1866,61 @@ function stopMonitorOutputTest() {
 document.getElementById("test-monitor-btn").addEventListener("click", () => {
   if (monitorOutputSource) stopMonitorOutputTest();
   else startMonitorOutputTest();
+});
+
+// ---- Estrés CPU/RAM (en vivo) ----
+let stressSource = null;
+
+function startStressTest() {
+  if (!confirm("Esto va a exigir el equipo al 100% por ~60 segundos. ¿Continuar?")) return;
+
+  const btn = document.getElementById("test-stress-btn");
+  const stats = document.getElementById("test-stress-stats");
+  const resultEl = document.getElementById("test-stress-result");
+  resultEl.textContent = "";
+  resultEl.className = "status-text";
+  stats.hidden = false;
+  btn.textContent = "Detener";
+
+  stressSource = new EventSource("/api/stress/stream");
+  stressSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.error) {
+      resultEl.textContent = data.error;
+      stopStressTest();
+      return;
+    }
+    if (data.done) {
+      const r = data.result;
+      resultEl.textContent = `${r.value ? r.value + " — " : ""}${r.message}`;
+      resultEl.className = r.status === "unknown" ? "status-text" : `status-text text-${r.status}`;
+      stopStressTest();
+      return;
+    }
+    document.getElementById("test-stress-elapsed").textContent = `${data.elapsed}s / ${data.total}s`;
+    document.getElementById("test-stress-cpu").textContent = `${data.cpu_percent}%`;
+    document.getElementById("test-stress-freq").textContent =
+      data.cpu_freq_mhz != null ? `${data.cpu_freq_mhz} / ${data.cpu_freq_max_mhz ?? "?"} MHz` : "—";
+    document.getElementById("test-stress-temp").textContent = data.cpu_temp_c != null ? `${data.cpu_temp_c}°C` : "—";
+  };
+  stressSource.onerror = () => {
+    resultEl.textContent = "Se cortó la conexión con la prueba.";
+    stopStressTest();
+  };
+}
+
+function stopStressTest() {
+  if (stressSource) {
+    stressSource.close();
+    stressSource = null;
+    fetch("/api/stress/stop", { method: "POST" }).catch(() => {});
+  }
+  document.getElementById("test-stress-btn").textContent = "Iniciar prueba (60s)";
+}
+
+document.getElementById("test-stress-btn").addEventListener("click", () => {
+  if (stressSource) stopStressTest();
+  else startStressTest();
 });
 
 // ---- Cámara ----

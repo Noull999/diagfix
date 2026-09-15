@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=43" />
+<link rel="stylesheet" href="/static/style.css?v=44" />
 </head>
 <body>
   <header class="topbar">
@@ -198,13 +198,14 @@
               <div><dt>RAM actual</dt><dd id="monitor-ram">—</dd></div>
               <div><dt>Red (subida / bajada)</dt><dd id="monitor-net">—</dd></div>
               <div><dt>Latencia</dt><dd id="monitor-latency">—</dd></div>
+              <div><dt>Temp. CPU</dt><dd id="monitor-temp">—</dd></div>
             </dl>
             <div class="monitor-columns">
               <div>
                 <p class="detail-label">Historial (últimos ticks arriba)</p>
                 <div class="table-scroll">
                   <table class="monitor-table">
-                    <thead><tr><th>Hora</th><th>CPU</th><th>RAM</th><th>↑ KB/s</th><th>↓ KB/s</th><th>Latencia</th></tr></thead>
+                    <thead><tr><th>Hora</th><th>CPU</th><th>RAM</th><th>↑ KB/s</th><th>↓ KB/s</th><th>Latencia</th><th>Temp. CPU</th></tr></thead>
                     <tbody id="monitor-history"></tbody>
                   </table>
                 </div>
@@ -398,6 +399,23 @@
         </details>
 
         <details class="card test-card">
+          <summary class="test-card-summary">Estrés CPU/RAM</summary>
+          <div class="test-card-body">
+            <div class="card-header">
+              <button id="test-stress-btn" class="btn btn-ghost btn-small">Iniciar prueba (60s)</button>
+            </div>
+            <p class="card-desc text-critical">Exige el equipo al 100% por ~60 segundos para detectar inestabilidad o sobrecalentamiento bajo carga real (patrón OCCT/Prime95). No la ejecutes si el cliente está usando el equipo en este momento.</p>
+            <dl id="test-stress-stats" class="monitor-stats" hidden>
+              <div><dt>Tiempo</dt><dd id="test-stress-elapsed">—</dd></div>
+              <div><dt>CPU</dt><dd id="test-stress-cpu">—</dd></div>
+              <div><dt>Reloj</dt><dd id="test-stress-freq">—</dd></div>
+              <div><dt>Temp. CPU</dt><dd id="test-stress-temp">—</dd></div>
+            </dl>
+            <p id="test-stress-result" class="status-text"></p>
+          </div>
+        </details>
+
+        <details class="card test-card">
           <summary class="test-card-summary">Pantalla</summary>
           <div class="test-card-body">
             <p class="card-desc">Colores sólidos a pantalla completa para detectar píxeles muertos o manchas. Hacé clic o Esc para salir.</p>
@@ -506,6 +524,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=43"></script>
+  <script src="/static/script.js?v=44"></script>
 </body>
 </html>

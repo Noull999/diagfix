@@ -21,6 +21,8 @@ $out = @()
 foreach ($d in $disks) {
     $parts = Get-Partition -DiskNumber $d.Number -ErrorAction SilentlyContinue
     $partList = @()
+    $rel = $null
+    try { $rel = Get-PhysicalDisk -DeviceId $d.Number -ErrorAction Stop | Get-StorageReliabilityCounter -ErrorAction Stop } catch {}
     foreach ($p in $parts) {
         $vol = $null
         if ($p.DriveLetter) { $vol = Get-Volume -DriveLetter $p.DriveLetter -ErrorAction SilentlyContinue }
@@ -42,6 +44,10 @@ foreach ($d in $disks) {
         healthStatus   = [string]$d.HealthStatus
         busType        = [string]$d.BusType
         isSystemDisk   = ($d.Number -eq $sysDiskNumber)
+        wearPct        = $rel.Wear
+        powerOnHours   = $rel.PowerOnHours
+        readErrors     = $rel.ReadErrorsUncorrected
+        writeErrors    = $rel.WriteErrorsUncorrected
         partitions     = $partList
     }
 }
@@ -64,7 +70,22 @@ def list_disks():
     for d in disks:
         if isinstance(d.get("partitions"), dict):
             d["partitions"] = [d["partitions"]]
+        d["smartStatus"] = _smart_verdict(d.get("wearPct"), d.get("readErrors"), d.get("writeErrors"))
     return {"available": True, "message": None, "disks": disks}
+
+
+def _smart_verdict(wear, read_errors, write_errors):
+    """Mismos umbrales que `hardware.check_disk_smart()`, para que la
+    pestaña Discos y el chequeo de Diagnóstico nunca queden en desacuerdo."""
+    if (read_errors or 0) > 0 or (write_errors or 0) > 0:
+        return "critical"
+    if wear is not None and wear > 90:
+        return "critical"
+    if wear is not None and wear > 70:
+        return "warning"
+    if wear is None and read_errors is None and write_errors is None:
+        return None
+    return "ok"
 
 
 def system_disk_number():
