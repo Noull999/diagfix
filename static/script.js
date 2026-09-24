@@ -1095,6 +1095,94 @@ async function loadStartupItems() {
   }
 }
 
+let installedAppsCache = [];
+
+function appFlags(app) {
+  const flags = [];
+  if (app.remote_access) flags.push({ label: "Acceso remoto", cls: "badge-warning" });
+  if (app.adware_match) flags.push({ label: "Adware conocido", cls: "badge-critical" });
+  if (app.recent) flags.push({ label: "Reciente", cls: "badge" });
+  if (app.no_publisher) flags.push({ label: "Sin editor", cls: "badge" });
+  return flags;
+}
+
+function renderInstalledApps() {
+  const list = document.getElementById("apps-list");
+  const onlyFlagged = document.getElementById("apps-only-flagged").checked;
+  const apps = onlyFlagged
+    ? installedAppsCache.filter((a) => a.remote_access || a.adware_match || a.recent || a.no_publisher)
+    : installedAppsCache;
+
+  list.innerHTML = "";
+  if (!apps.length) {
+    const p = document.createElement("p");
+    p.className = "status-text";
+    p.textContent = onlyFlagged ? "Ninguna app tiene alertas." : "Sin datos.";
+    list.appendChild(p);
+    return;
+  }
+
+  const table = document.createElement("table");
+  table.className = "partition-table";
+  table.innerHTML = "<thead><tr><th>Programa</th><th>Editor</th><th>Instalado</th><th>Alertas</th></tr></thead>";
+  const tbody = document.createElement("tbody");
+  apps.forEach((app) => {
+    const tr = document.createElement("tr");
+    const tdName = document.createElement("td");
+    tdName.textContent = app.version ? `${app.name} (${app.version})` : app.name;
+    const tdPub = document.createElement("td");
+    tdPub.textContent = app.publisher || "—";
+    const tdDate = document.createElement("td");
+    tdDate.textContent = app.install_date || "—";
+    const tdFlags = document.createElement("td");
+    appFlags(app).forEach((f) => {
+      const span = document.createElement("span");
+      span.className = `badge ${f.cls}`;
+      span.textContent = f.label;
+      span.style.marginRight = "4px";
+      tdFlags.appendChild(span);
+    });
+    tr.appendChild(tdName);
+    tr.appendChild(tdPub);
+    tr.appendChild(tdDate);
+    tr.appendChild(tdFlags);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  list.appendChild(table);
+}
+
+async function loadInstalledApps() {
+  const status = document.getElementById("apps-status");
+  const summary = document.getElementById("apps-summary");
+  status.textContent = "Consultando…";
+  try {
+    const res = await fetch("/api/installed-apps");
+    const data = await res.json();
+    if (!data.available) {
+      status.textContent = data.message || "No se pudo consultar.";
+      return;
+    }
+    status.textContent = "";
+    installedAppsCache = data.apps;
+    const remoteCount = data.apps.filter((a) => a.remote_access).length;
+    const adwareCount = data.apps.filter((a) => a.adware_match).length;
+    const recentCount = data.apps.filter((a) => a.recent).length;
+    summary.textContent = [
+      `${data.apps.length} apps instaladas`,
+      recentCount ? `${recentCount} recientes (últimos 30 días)` : null,
+      remoteCount ? `${remoteCount} con acceso remoto` : null,
+      adwareCount ? `${adwareCount} con adware conocido` : null,
+    ].filter(Boolean).join(" · ");
+    renderInstalledApps();
+  } catch (e) {
+    status.textContent = "No se pudo cargar la lista de apps instaladas.";
+  }
+}
+
+document.getElementById("apps-reload-btn").addEventListener("click", loadInstalledApps);
+document.getElementById("apps-only-flagged").addEventListener("change", renderInstalledApps);
+
 async function backupDrivers() {
   const status = document.getElementById("drivers-status");
   const dest = document.getElementById("drivers-dest").value.trim();

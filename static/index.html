@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=45" />
+<link rel="stylesheet" href="/static/style.css?v=46" />
 </head>
 <body>
   <header class="topbar">
@@ -438,6 +438,24 @@
         </section>
 
         <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Apps instaladas</h2>
+            <button id="apps-reload-btn" class="btn btn-ghost btn-small">Cargar apps</button>
+            <span id="apps-status" class="status-text"></span>
+          </div>
+          <p class="card-desc">
+            Marca instalaciones recientes, sin editor declarado, coincidencias con adware conocido y herramientas de acceso remoto —
+            estas últimas no son necesariamente maliciosas, pero vale la pena confirmar con el cliente si él las instaló.
+          </p>
+          <label class="filter-toggle">
+            <input type="checkbox" id="apps-only-flagged" />
+            Mostrar solo con alertas
+          </label>
+          <p id="apps-summary" class="card-desc"></p>
+          <div id="apps-list"></div>
+        </section>
+
+        <section class="card">
           <div class="card-header"><h2 class="card-title">Backup de drivers</h2></div>
           <p class="card-desc">Exporta los drivers de terceros instalados a una carpeta, para reinstalarlos después de formatear. Requiere permisos de administrador.</p>
           <div class="nas-row">
@@ -524,6 +542,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=45"></script>
+  <script src="/static/script.js?v=46"></script>
 </body>
 </html>

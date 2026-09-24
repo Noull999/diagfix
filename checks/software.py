@@ -114,12 +114,40 @@ def _software_fast_batch():
 _DEFENDER_SCRIPT = r"""
 $mp = Get-MpComputerStatus -ErrorAction SilentlyContinue
 $fw = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+
+# Antivirus de terceros registrado en el Centro de seguridad de Windows -
+# si hay uno activo, Windows apaga la proteccion en tiempo real de
+# Defender a proposito (no es una falla, es el comportamiento esperado
+# cuando dos antivirus compiten por el mismo gancho del sistema).
+$thirdParty = $null
+try {
+    $thirdParty = Get-CimInstance -Namespace "root/SecurityCenter2" -ClassName AntiVirusProduct -ErrorAction Stop |
+        Where-Object { $_.displayName -notmatch "Windows Defender|Microsoft Defender" } |
+        Select-Object -First 1 -ExpandProperty displayName
+} catch {}
+
 [ordered]@{
     available = [bool]$mp
     rtp       = if ($mp) { [bool]$mp.RealTimeProtectionEnabled } else { $null }
     sigAgeDays = if ($mp) { $mp.AntivirusSignatureAge } else { $null }
     fwAllOn   = if ($fw) { -not ($fw | Where-Object { -not $_.Enabled }) } else { $null }
+    thirdPartyAv = $thirdParty
 } | ConvertTo-Json -Compress
+""".strip()
+
+
+_THREATS_SCRIPT = r"""
+$detections = Get-MpThreatDetection -ErrorAction SilentlyContinue | Sort-Object InitialDetectionTime -Descending | Select-Object -First 15
+$out = @($detections | ForEach-Object {
+    $info = Get-MpThreat -ThreatID $_.ThreatID -ErrorAction SilentlyContinue
+    [ordered]@{
+        name     = if ($info -and $info.ThreatName) { $info.ThreatName } else { "ID $($_.ThreatID)" }
+        detected = if ($_.InitialDetectionTime) { $_.InitialDetectionTime.ToString('yyyy-MM-dd HH:mm') } else { $null }
+        action   = [int]$_.CleaningActionID
+        active   = if ($info) { [bool]$info.IsActive } else { $null }
+    }
+})
+$out | ConvertTo-Json -Compress -Depth 3
 """.strip()
 
 # Códigos de Win32_PnPEntity.ConfigManagerErrorCode — estables desde Windows
@@ -346,7 +374,12 @@ def check_bsod(batch=None):
 
 def check_defender_firewall():
     """Estado de Microsoft Defender (protección en tiempo real, antigüedad de
-    firmas) y de los perfiles del Firewall de Windows."""
+    firmas) y de los perfiles del Firewall de Windows.
+
+    Si hay un antivirus de terceros activo, Windows apaga la protección en
+    tiempo real de Defender a propósito — no es una falla, así que en ese
+    caso RTP=false no cuenta como problema, solo se informa cuál es el
+    antivirus real."""
     if platform.system() != "Windows":
         return _result("Antivirus y firewall", "unknown", None, "Chequeo disponible solo en Windows.")
     output = _run_powershell(_DEFENDER_SCRIPT, timeout=15)
@@ -356,7 +389,12 @@ def check_defender_firewall():
         data = json.loads(output)
     except (json.JSONDecodeError, ValueError):
         return _result("Antivirus y firewall", "unknown", None, "No se pudo interpretar la respuesta.")
+
+    third_party = data.get("thirdPartyAv")
     if not data.get("available"):
+        if third_party:
+            return _result("Antivirus y firewall", "ok", third_party,
+                            f"Protegido por {third_party} (no se pudo consultar el estado detallado de Defender).")
         return _result("Antivirus y firewall", "unknown", None,
                         "No se pudo consultar Defender (puede haber otro antivirus instalado).")
 
@@ -370,14 +408,16 @@ def check_defender_firewall():
         "Ejecuta 'Buscar actualizaciones' en Seguridad de Windows para refrescar las definiciones de virus.",
     ]
     problems = []
-    if rtp is False:
+    # RTP apagado es esperable (no un problema) cuando hay otro antivirus
+    # activo haciéndose cargo — Windows lo desactiva solo para no duplicar.
+    if rtp is False and not third_party:
         problems.append("protección en tiempo real desactivada")
     if fw_on is False:
         problems.append("firewall desactivado en algún perfil")
-    if sig_age is not None and sig_age > 14:
+    if sig_age is not None and sig_age > 14 and not third_party:
         problems.append(f"definiciones con {sig_age} días de antigüedad")
 
-    if rtp is False or fw_on is False:
+    if (rtp is False and not third_party) or fw_on is False:
         return _result("Antivirus y firewall", "critical", "; ".join(problems), "El equipo tiene protección desactivada.", causes=causes, fix=fix)
     if problems:
         # Las firmas viejas sí se arreglan con un comando; la protección
@@ -386,7 +426,56 @@ def check_defender_firewall():
         return _result("Antivirus y firewall", "warning", "; ".join(problems),
                         "Hay detalles de seguridad para revisar.", causes=causes, fix=fix,
                         action_id="update_defender" if stale_signatures else None)
-    return _result("Antivirus y firewall", "ok", "Activo", "Protección en tiempo real y firewall activos.")
+    value = f"Activo ({third_party})" if third_party else "Activo"
+    return _result("Antivirus y firewall", "ok", value, "Protección en tiempo real y firewall activos.")
+
+
+# CleaningActionID de Get-MpThreatDetection: 0=Sin acción/desconocida,
+# 1=Limpiar, 2=Cuarentena, 3=Eliminar, 6=Permitir, 8=Definida por el
+# usuario, 9=Sin acción, 10=Bloquear (esquema WMI MSFT_MpThreatDetection).
+_UNRESOLVED_ACTIONS = {0, 9}
+
+
+def check_defender_threats():
+    """Historial de detecciones de Microsoft Defender — a diferencia de
+    check_defender_firewall (que solo dice si la protección está prendida),
+    esto dice si Defender ya encontró algo alguna vez, y si sigue activo o
+    quedó resuelto. Una amenaza "activa" o "sin acción" es mucho más
+    urgente que una ya puesta en cuarentena hace semanas."""
+    if platform.system() != "Windows":
+        return _result("Amenazas detectadas", "unknown", None, "Chequeo disponible solo en Windows.")
+    output = _run_powershell(_THREATS_SCRIPT, timeout=20)
+    if output is None:
+        return _result("Amenazas detectadas", "unknown", None,
+                        "No se pudo consultar el historial de Defender (puede haber otro antivirus instalado).")
+    if not output:
+        return _result("Amenazas detectadas", "ok", "Sin registros", "Defender no registra amenazas detectadas.")
+    try:
+        threats = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        return _result("Amenazas detectadas", "unknown", None, "No se pudo interpretar la respuesta.")
+    if isinstance(threats, dict):
+        threats = [threats]
+    if not threats:
+        return _result("Amenazas detectadas", "ok", "Sin registros", "Defender no registra amenazas detectadas.")
+
+    active = [t for t in threats if t.get("active") or t.get("action") in _UNRESOLVED_ACTIONS]
+    causes = ["El equipo abrió un adjunto, instalador o link malicioso", "Una unidad USB infectada conectada al equipo", "Descarga de un programa pirateado o con adware empaquetado"]
+    fix = [
+        "Ejecuta un análisis rápido de Defender (o completo, si el tiempo lo permite).",
+        "Revisa el historial completo en Seguridad de Windows > Protección contra virus y amenazas > Historial de protección.",
+        "Si la amenaza sigue activa, desconecta el equipo de internet hasta limpiarlo.",
+    ]
+    if active:
+        nombres = ", ".join(sorted({t["name"] for t in active})[:3])
+        return _result("Amenazas detectadas", "critical", nombres,
+                        f"Defender tiene {len(active)} amenaza(s) sin resolver o activa(s).",
+                        causes=causes, fix=fix, action_id="quick_scan_defender")
+    nombres = ", ".join(sorted({t["name"] for t in threats})[:3])
+    return _result("Amenazas detectadas", "warning", nombres,
+                    f"Defender detectó {len(threats)} amenaza(s) en el pasado, ya resueltas — vale la pena confirmar con un análisis.",
+                    fix=["Ejecuta un análisis rápido para confirmar que el equipo sigue limpio."],
+                    action_id="quick_scan_defender")
 
 
 def check_error_devices(batch=None):
@@ -656,7 +745,7 @@ def run_all():
     # run_parallel con la lista plana de siempre: necesitan esperar ese
     # resultado compartido, que a su vez corre en paralelo con los chequeos
     # lentos (Defender, BitLocker) para no sumarle tiempo al total.
-    with ThreadPoolExecutor(max_workers=15) as pool:
+    with ThreadPoolExecutor(max_workers=16) as pool:
         batch_f = pool.submit(_software_fast_batch)
         futures = [
             pool.submit(check_pending_reboot),
@@ -668,6 +757,7 @@ def run_all():
             pool.submit(lambda: check_bsod(batch_f.result())),
             pool.submit(lambda: check_app_crashes(batch_f.result())),
             pool.submit(check_defender_firewall),
+            pool.submit(check_defender_threats),
             pool.submit(lambda: check_error_devices(batch_f.result())),
             pool.submit(lambda: check_stopped_services(batch_f.result())),
             pool.submit(lambda: check_print_spooler(batch_f.result())),

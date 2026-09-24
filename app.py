@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from checks import actions, correlate, disk_actions, disks, history, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, stress_test, updater, warranty, win11_readiness
+from checks import actions, correlate, disk_actions, disks, history, installed_apps, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, stress_test, updater, warranty, win11_readiness
 from checks import system_info as system_info_check
 
 BASE_DIR = Path(__file__).parent
@@ -498,6 +498,16 @@ def startup_list(request: Request):
     if not _same_origin(request):
         return JSONResponse([], status_code=403)
     return startup_manager.list_items()
+
+
+@app.get("/api/installed-apps")
+def installed_apps_list(request: Request):
+    """Lista de programas instalados con banderas (reciente, sin editor,
+    adware conocido, acceso remoto). Mismo chequeo de Host que el resto —
+    revela software instalado en el equipo."""
+    if not _same_origin(request):
+        return JSONResponse({"available": False, "message": "Origen no permitido.", "apps": []}, status_code=403)
+    return installed_apps.list_installed_apps()
 
 
 class StartupToggleRequest(BaseModel):

@@ -1,30 +1,39 @@
 """Gestor de inicio real: a diferencia de `software.check_startup_items`
 (que solo cuenta), esto lista cada programa con su comando real y permite
-deshabilitarlo/habilitarlo sin borrar nada.
+deshabilitarlo/habilitarlo sin borrar nada para siempre.
 
-Mecanismo de deshabilitado — deliberadamente NO se usa el formato binario
-interno de `StartupApproved\\Run` que usa el Administrador de tareas (no está
-documentado oficialmente y cambia entre versiones de Windows; escribirlo mal
-puede dejar el estado ambiguo). En cambio:
+Mecanismo de deshabilitado:
 
-- Entradas de registro (Run): se renombra el *nombre* del valor agregándole
-  un sufijo — Windows solo ejecuta los valores con el nombre esperado, así
-  que renombrado deja de ejecutarse, y el comando original se conserva
-  intacto para poder revertirlo con solo volver a renombrar.
+- Entradas de registro (Run): ¡ojo! Windows ejecuta TODOS los valores
+  presentes en la clave `Run` al iniciar sesión, sin importar cómo se
+  llamen — la primera versión de esto renombraba el valor (agregándole un
+  sufijo) asumiendo que Windows solo corría el nombre "esperado", pero eso
+  es falso: el programa seguía abriéndose igual (confirmado por un
+  usuario con Discord). Por eso ahora se **elimina** el valor de verdad
+  al deshabilitar, guardando una copia (nombre, dato, tipo) en
+  `diagfix_startup_disabled.json` junto al programa — y al rehabilitar se
+  vuelve a crear el valor a partir de esa copia. Deliberadamente NO se usa
+  el formato binario interno de `StartupApproved\\Run` que usa el
+  Administrador de tareas (no está documentado oficialmente y cambia entre
+  versiones de Windows; además de que WOW6432Node/vistas de 32 y 64 bits lo
+  complican) — eliminar + respaldo propio es más simple y 100% efectivo.
 - Accesos directos en la carpeta de Inicio: se les agrega `.disabled` al
-  nombre de archivo completo — Windows no reconoce esa extensión, así que
-  dejan de ejecutarse, y se restauran quitando el sufijo.
-
-Todo reversible, transparente (se puede confirmar a simple vista en
-regedit/el explorador) y sin depender de un formato no documentado.
+  nombre de archivo completo — Windows solo lanza extensiones reconocidas
+  (.lnk, .exe, .bat...) al escanear esa carpeta, así que un archivo con esa
+  extensión ya no es reconocido y no se ejecuta. Esto sí funciona (a
+  diferencia del caso de registro) porque Windows escanea la carpeta por
+  extensión de archivo, no por un nombre esperado.
 """
+import json
 import os
 import winreg
 from pathlib import Path
 
-_DISABLED_SUFFIX = "__DiagFixDisabled"
+from .base import app_dir as _app_dir
+
 _FILE_DISABLED_SUFFIX = ".disabled"
 _IGNORED_FILES = {"desktop.ini"}
+_DISABLED_STORE_PATH = _app_dir() / "diagfix_startup_disabled.json"
 
 _RUN_PATHS = [
     ("HKCU", winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run"),
@@ -34,6 +43,22 @@ _RUN_PATHS = [
 
 class StartupError(Exception):
     pass
+
+
+def _load_disabled_registry_backup():
+    if not _DISABLED_STORE_PATH.exists():
+        return {}
+    try:
+        return json.loads(_DISABLED_STORE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+
+
+def _save_disabled_registry_backup(data):
+    try:
+        _DISABLED_STORE_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _startup_folders():
@@ -49,6 +74,7 @@ def _startup_folders():
 
 def list_items():
     items = []
+    seen_reg_ids = set()
 
     for hive_label, hive, path in _RUN_PATHS:
         try:
@@ -60,18 +86,35 @@ def list_items():
                     except OSError:
                         break
                     i += 1
-                    enabled = not name.endswith(_DISABLED_SUFFIX)
-                    display_name = name[: -len(_DISABLED_SUFFIX)] if not enabled else name
+                    item_id = f"reg|{hive_label}|{name}"
+                    seen_reg_ids.add(item_id)
                     items.append({
-                        "id": f"reg|{hive_label}|{name}",
-                        "name": display_name,
+                        "id": item_id,
+                        "name": name,
                         "command": value,
                         "location": f"Registro ({hive_label})",
-                        "enabled": enabled,
+                        "enabled": True,
                         "kind": "registry",
                     })
         except OSError:
             continue
+
+    # Entradas deshabilitadas: ya no están en el registro (se eliminaron de
+    # verdad), así que se listan desde el respaldo propio para que sigan
+    # apareciendo y se puedan rehabilitar.
+    for key_id, backup in _load_disabled_registry_backup().items():
+        hive_label, _, name = key_id.partition("|")
+        item_id = f"reg|{hive_label}|{name}"
+        if item_id in seen_reg_ids:
+            continue
+        items.append({
+            "id": item_id,
+            "name": name,
+            "command": backup.get("value"),
+            "location": f"Registro ({hive_label})",
+            "enabled": False,
+            "kind": "registry",
+        })
 
     for label, folder in _startup_folders():
         if not folder.exists():
@@ -113,17 +156,31 @@ def set_enabled(item_id: str, enabled: bool):
 
     kind, _, rest = item["id"].partition("|")
     if kind == "reg":
-        hive_label, _, current_name = rest.partition("|")
+        hive_label, _, name = rest.partition("|")
         hive = winreg.HKEY_CURRENT_USER if hive_label == "HKCU" else winreg.HKEY_LOCAL_MACHINE
         path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        new_name = item["name"] if enabled else f"{item['name']}{_DISABLED_SUFFIX}"
-        try:
-            with winreg.OpenKey(hive, path, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as key:
-                value, value_type = winreg.QueryValueEx(key, current_name)
-                winreg.SetValueEx(key, new_name, 0, value_type, value)
-                winreg.DeleteValue(key, current_name)
-        except OSError as exc:
-            raise StartupError(f"No se pudo modificar el registro: {exc}") from exc
+        key_id = f"{hive_label}|{name}"
+        backup = _load_disabled_registry_backup()
+        if enabled:
+            entry = backup.get(key_id)
+            if entry is None:
+                raise StartupError("No se encontró el respaldo para restaurar este elemento.")
+            try:
+                with winreg.OpenKey(hive, path, 0, winreg.KEY_SET_VALUE) as key:
+                    winreg.SetValueEx(key, name, 0, entry["type"], entry["value"])
+            except OSError as exc:
+                raise StartupError(f"No se pudo restaurar el registro: {exc}") from exc
+            backup.pop(key_id, None)
+            _save_disabled_registry_backup(backup)
+        else:
+            try:
+                with winreg.OpenKey(hive, path, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as key:
+                    value, value_type = winreg.QueryValueEx(key, name)
+                    winreg.DeleteValue(key, name)
+            except OSError as exc:
+                raise StartupError(f"No se pudo modificar el registro: {exc}") from exc
+            backup[key_id] = {"value": value, "type": value_type}
+            _save_disabled_registry_backup(backup)
     else:  # file
         current_path = Path(rest)
         new_path = current_path.with_name(

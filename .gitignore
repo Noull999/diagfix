@@ -17,6 +17,7 @@ venv/
 *.jsonl
 *.csv
 diagfix_settings.json
+diagfix_startup_disabled.json
 reportes/
 
 # Scripts personales del técnico en la Zona de Scripts — no son parte de la
