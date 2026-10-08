@@ -162,20 +162,31 @@ def render_specs_png(identity: dict) -> bytes:
     # Resumen condensado (CPU/RAM/disco/GPU) — el mismo que muestra el panel
     # "Componentes" en pantalla, para que el PNG exportado no obligue a
     # buscar estos datos más abajo, en las tablas detalladas.
-    primer_modulo = ram_modules[0] if ram_modules else {}
-    primer_disco = disks[0] if disks else {}
-    primera_gpu = gpus[0] if gpus else {}
-    detalle_ram = " · ".join(filter(None, [
-        primer_modulo.get("type"),
-        f"{primer_modulo['speed_mhz']} MHz" if primer_modulo.get("speed_mhz") else None,
-    ]))
+    # Igual que en pantalla: todos los módulos de RAM y todos los discos
+    # internos, no solo el primero.
+    def _modulo(m):
+        return " ".join(filter(None, [
+            f"{m['capacity_gb']}GB" if m.get("capacity_gb") is not None else None,
+            m.get("type"),
+            f"{m['speed_mhz']} MHz" if m.get("speed_mhz") else None,
+        ]))
+
+    claves = {(m.get("capacity_gb"), m.get("type"), m.get("speed_mhz")) for m in ram_modules}
+    if len(ram_modules) > 1 and len(claves) == 1:
+        detalle_ram = f"{len(ram_modules)}x {_modulo(ram_modules[0])}"
+    else:
+        detalle_ram = " + ".join(filter(None, (_modulo(m) for m in ram_modules)))
     ram_total_resumen = f"{identity.get('ram_total_gb')} GB" if identity.get("ram_total_gb") is not None else "—"
-    detalle_disco = " · ".join(filter(None, [primer_disco.get("media_type"), primer_disco.get("bus_type")]))
+    almacenamiento = " + ".join(
+        f"{d.get('size_label') or '?'}" + (f" ({' '.join(filter(None, [d.get('bus_type'), d.get('media_type')]))})"
+                                            if d.get("bus_type") or d.get("media_type") else "")
+        for d in disks
+    ) or "—"
     componentes_rows = [
         ("CPU", identity.get("cpu_name") or "—"),
         ("Memoria", f"{ram_total_resumen} ({detalle_ram})" if detalle_ram else ram_total_resumen),
-        ("Almacenamiento", f"{primer_disco.get('size_label') or '—'}" + (f" ({detalle_disco})" if detalle_disco else "")),
-        ("Video", primera_gpu.get("name") or "—"),
+        ("Almacenamiento", almacenamiento),
+        ("Video", " + ".join(filter(None, (g.get("name") for g in gpus))) or "—"),
     ]
 
     n_lines = (

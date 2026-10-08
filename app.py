@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from checks import actions, correlate, disk_actions, disks, history, installed_apps, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, stress_test, updater, warranty, win11_readiness
+from checks import actions, correlate, disk_actions, disks, drivers, history, installed_apps, inventory, local_reports, maintenance, monitor, nas, network, hardware, report_image, restore, scripts_runner, settings, software, startup_manager, stress_test, updater, warranty, win11_readiness
 from checks import system_info as system_info_check
 
 BASE_DIR = Path(__file__).parent
@@ -508,6 +508,35 @@ def installed_apps_list(request: Request):
     if not _same_origin(request):
         return JSONResponse({"available": False, "message": "Origen no permitido.", "apps": []}, status_code=403)
     return installed_apps.list_installed_apps()
+
+
+@app.get("/api/drivers/search")
+def drivers_search(request: Request):
+    """Controladores pendientes según Windows Update (tarda ~15-30s y
+    necesita internet: por eso va con botón, no en el escaneo automático)."""
+    if not _same_origin(request):
+        return JSONResponse({"available": False, "message": "Origen no permitido.", "updates": []}, status_code=403)
+    return drivers.search_windows_update()
+
+
+@app.post("/api/drivers/install")
+def drivers_install(request: Request):
+    """Descarga e instala todos los controladores pendientes de Windows
+    Update. Cambia el equipo: mismo chequeo de origen que las acciones, y
+    queda registrado en actions_log.jsonl."""
+    if not _same_origin(request):
+        return JSONResponse({"status": "error", "message": "Origen no permitido."}, status_code=403)
+    return drivers.install_windows_update()
+
+
+@app.get("/api/drivers/vendor-tool")
+def drivers_vendor_tool(request: Request, manufacturer: str = ""):
+    if not _same_origin(request):
+        return JSONResponse({"available": False, "message": "Origen no permitido."}, status_code=403)
+    if not manufacturer:
+        identidad = system_info_check.get_identity()
+        manufacturer = identidad.get("manufacturer") or ""
+    return drivers.vendor_tool(manufacturer)
 
 
 class StartupToggleRequest(BaseModel):

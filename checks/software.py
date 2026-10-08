@@ -82,6 +82,13 @@ $result.errorDevices = @(Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyCo
     Where-Object { $_.ConfigManagerErrorCode -and $_.ConfigManagerErrorCode -ne 0 } |
     Select-Object Name, ConfigManagerErrorCode)
 
+# Tarjeta de video funcionando con el "Adaptador de pantalla básico" de
+# Microsoft (display.inf): no aparece con error en el Administrador de
+# dispositivos, pero significa que falta el driver del fabricante — lo
+# típico después de formatear (baja resolución, sin brillo, sin aceleración).
+$result.basicDisplay = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+    Where-Object { $_.InfFilename -eq 'display.inf' } | Select-Object -ExpandProperty Name)
+
 $result.spoolerStatus = [string](Get-Service -Name Spooler -ErrorAction SilentlyContinue).Status
 
 # Actualizaciones que FALLARON al instalarse (evento 20 de WindowsUpdateClient).
@@ -606,16 +613,21 @@ def check_error_devices(batch=None):
         nombre = (d.get("Name") or "Dispositivo desconocido").strip()
         codigo = d.get("ConfigManagerErrorCode")
         detalles.append(f"{nombre}: {_device_error_detail(codigo)}")
+    basicos = batch.get("basicDisplay") or []
+    if isinstance(basicos, str):
+        basicos = [basicos]
+    for nombre in basicos:
+        detalles.append(f"{nombre}: la tarjeta de video usa el controlador básico de Microsoft (falta el del fabricante)")
     if not detalles:
-        return _result("Dispositivos con error", "ok", "0", "Ningún dispositivo reporta error.")
+        return _result("Dispositivos con error", "ok", "0", "Ningún dispositivo reporta error ni le falta su controlador.")
     return _result(
         "Dispositivos con error", "warning", "; ".join(detalles),
-        "Hay dispositivos con error en el Administrador de dispositivos.",
-        causes=["Driver faltante, dañado o incompatible", "Dispositivo defectuoso o mal conectado", "El dispositivo está deshabilitado o su servicio no arranca"],
+        "Hay dispositivos con error o sin su controlador.",
+        causes=["Equipo recién formateado: faltan los controladores del fabricante", "Driver dañado o incompatible", "Dispositivo deshabilitado o mal conectado"],
         fix=[
-            "Abre el Administrador de dispositivos (devmgmt.msc) y busca el dispositivo por su nombre.",
-            "El detalle de este chequeo ya indica la causa más probable según el código de error de Windows.",
-            "Si dice 'faltan drivers', reinstala el driver desde el sitio del fabricante. Si dice 'deshabilitado', habilítalo con clic derecho > Habilitar dispositivo.",
+            "Usa 'Buscar en Windows Update' en la tarjeta Controladores (pestaña Sistema): instala los que Windows tiene disponibles.",
+            "Lo que no aparezca ahí (chipset, teclas de función, audio) está en la herramienta del fabricante, indicada en la misma tarjeta.",
+            "Si dice 'deshabilitado', habilítalo en el Administrador de dispositivos con clic derecho > Habilitar dispositivo.",
         ],
     )
 

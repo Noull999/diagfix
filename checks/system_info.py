@@ -36,7 +36,9 @@ $slotsTotal = if ($memArray) { ($memArray | Measure-Object -Property MemoryDevic
 
 $ramModules = @($mem | ForEach-Object {
     [ordered]@{
-        slot               = $_.DeviceLocator
+        # Algunos fabricantes (ASUS, por ejemplo) repiten "DIMM 0" en todos los
+        # módulos y los distinguen solo por BankLabel ("P0 CHANNEL A"/"B").
+        slot               = if ($_.BankLabel) { "$($_.BankLabel) · $($_.DeviceLocator)" } else { $_.DeviceLocator }
         manufacturer       = $_.Manufacturer
         partNumber         = if ($_.PartNumber) { $_.PartNumber.Trim() } else { $null }
         speedMhz           = $_.Speed
@@ -45,6 +47,15 @@ $ramModules = @($mem | ForEach-Object {
     }
 })
 
+# Solo discos internos: la ficha describe el equipo, y DiagFix corre desde
+# un pendrive que si no aparecía siempre como "almacenamiento" del equipo
+# (igual que cualquier disco externo o tarjeta SD conectada en ese momento).
+# BusType es un código (7=USB, 12=SD, 13=MMC); se mira también el nombre por
+# si en algún equipo el tipo no se resuelve a texto.
+$physDisks = @($physDisks | Where-Object {
+    [string]$_.BusType -notin @('USB', 'SD', 'MMC') -and $_.CimInstanceProperties['BusType'].Value -notin @(7, 12, 13)
+})
+$disks = @($disks | Where-Object { $_.InterfaceType -ne 'USB' -and [string]$_.MediaType -notmatch 'Removable|External' })
 $diskInfo = @()
 if ($physDisks) {
     $diskInfo = @($physDisks | ForEach-Object {
@@ -65,12 +76,26 @@ $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Ob
 $cpuName = if ($cpu.Name) { ($cpu.Name -replace '\s+', ' ').Trim() } else { $null }
 $cpuMaxMhz = $cpu.MaxClockSpeed
 
-$gpuInfo = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object {
+# Win32_VideoController.AdapterRAM es de 32 bits: cualquier GPU con más de
+# 4 GB sale como 4095 MB (una RTX 3060 de 6 GB, por ejemplo). El valor real
+# de 64 bits está en el registro del driver (HardwareInformation.qwMemorySize).
+$vramReal = @{}
+Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}' -ErrorAction SilentlyContinue | ForEach-Object {
+    $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+    if ($p.DriverDesc -and $p.'HardwareInformation.qwMemorySize') {
+        $vramReal[[string]$p.DriverDesc] = [math]::Round([int64]$p.'HardwareInformation.qwMemorySize' / 1MB)
+    }
+}
+# Los adaptadores de escritorio remoto o pantallas virtuales (RDP, Parsec,
+# etc.) no son hardware del equipo — igual que un pendrive en Almacenamiento.
+$gpuInfo = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notmatch 'Remote Display|Virtual|Indirect Display' } | ForEach-Object {
     [ordered]@{
         name           = $_.Name
         driverVersion  = $_.DriverVersion
         driverDate     = if ($_.DriverDate) { $_.DriverDate.ToString('yyyy-MM-dd') } else { $null }
-        vramMb         = if ($_.AdapterRAM -and $_.AdapterRAM -gt 0) { [math]::Round($_.AdapterRAM / 1MB) } else { $null }
+        vramMb         = if ($vramReal.ContainsKey([string]$_.Name)) { $vramReal[[string]$_.Name] }
+                         elseif ($_.AdapterRAM -and $_.AdapterRAM -gt 0) { [math]::Round($_.AdapterRAM / 1MB) } else { $null }
     }
 })
 

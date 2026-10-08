@@ -32,6 +32,8 @@ function switchTab(tabId) {
     startMonitor();
   } else if (tabId === "tab-inventario") {
     viewInventory();
+  } else if (tabId === "tab-sistema") {
+    loadVendorTool();
   }
 }
 
@@ -281,19 +283,22 @@ async function loadIdentity() {
       data.ram_slots_used != null ? `${data.ram_slots_used}/${data.ram_slots_total ?? "?"} slots` : null,
     ].filter(Boolean).join(" · ") || "—";
 
-    const primerDisco = (data.disks || [])[0];
-    document.getElementById("specs-componentes-disco-value").textContent = primerDisco?.size_label || "—";
-    document.getElementById("specs-componentes-disco-detail").textContent = [
-      primerDisco?.media_type, primerDisco?.bus_type,
-    ].filter(Boolean).join(" · ") || "—";
+    // Todos los discos internos (antes solo el primero: un equipo con SSD +
+    // HDD mostraba uno solo acá, igual que pasaba con la RAM).
+    const discos = data.disks || [];
+    document.getElementById("specs-componentes-disco-value").textContent =
+      discos.map((d) => d.size_label).filter(Boolean).join(" + ") || "—";
+    document.getElementById("specs-componentes-disco-detail").textContent =
+      discos.map((d) => [d.bus_type, d.media_type].filter(Boolean).join(" ")).filter(Boolean).join(" + ") || "—";
 
     const compGpu = document.getElementById("specs-componentes-gpu");
     compGpu.innerHTML = "";
-    const primeraGpu = (data.gpus || [])[0];
-    compGpu.appendChild(identityField("GPU", [
-      primeraGpu?.name,
-      primeraGpu?.vram_mb ? `${(primeraGpu.vram_mb / 1024).toFixed(1)} GB VRAM` : null,
-    ].filter(Boolean).join(" · ")));
+    // Todas las GPU: en un notebook con integrada + dedicada, la primera
+    // suele ser la integrada y la que importa (la dedicada) quedaba oculta.
+    const gpus = data.gpus || [];
+    const gpuTexto = (g) => [g.name, g.vram_mb ? `${(g.vram_mb / 1024).toFixed(1)} GB VRAM` : null].filter(Boolean).join(" · ");
+    if (!gpus.length) compGpu.appendChild(identityField("GPU", null));
+    gpus.forEach((g, i) => compGpu.appendChild(identityField(gpus.length > 1 ? `GPU ${i + 1}` : "GPU", gpuTexto(g))));
 
     document.getElementById("specs-ram-summary").textContent =
       data.ram_total_gb != null
@@ -1094,6 +1099,113 @@ async function loadStartupItems() {
     status.textContent = "No se pudo cargar la lista de programas de inicio.";
   }
 }
+
+// ---- Controladores (Windows Update + herramienta del fabricante) ----
+let vendorToolLoaded = false;
+
+async function loadVendorTool() {
+  if (vendorToolLoaded) return;
+  vendorToolLoaded = true;
+  const el = document.getElementById("drivers-vendor");
+  try {
+    const params = new URLSearchParams({ manufacturer: currentManufacturer || "" });
+    const res = await fetch(`/api/drivers/vendor-tool?${params}`);
+    const data = await res.json();
+    el.innerHTML = "";
+    if (!data.available) {
+      el.textContent = data.message || "";
+      return;
+    }
+    const strong = document.createElement("strong");
+    strong.textContent = data.tool;
+    el.append("Herramienta del fabricante: ", strong, " — ");
+    if (data.installed) {
+      el.append("ya está instalada. Ábrela desde Inicio y busca actualizaciones: trae chipset, teclas de función y audio que Windows Update a veces no tiene.");
+    } else {
+      const a = document.createElement("a");
+      a.href = data.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "descargar desde el sitio oficial";
+      el.append("no está instalada (", a, "). Trae chipset, teclas de función y audio que Windows Update a veces no tiene.");
+    }
+  } catch (e) {
+    vendorToolLoaded = false;
+  }
+}
+
+async function searchDrivers() {
+  const btn = document.getElementById("drivers-search-btn");
+  const status = document.getElementById("drivers-search-status");
+  const list = document.getElementById("drivers-updates");
+  const installBtn = document.getElementById("drivers-install-btn");
+  btn.disabled = true;
+  installBtn.hidden = true;
+  list.innerHTML = "";
+  status.textContent = "Buscando en Windows Update…";
+  try {
+    const res = await fetch("/api/drivers/search");
+    const data = await res.json();
+    if (!data.available) {
+      status.textContent = data.message || "No se pudo consultar Windows Update.";
+      return;
+    }
+    if (!data.updates.length) {
+      status.textContent = `Sin controladores pendientes en ${data.source}.`;
+      return;
+    }
+    status.textContent = `${data.updates.length} controlador(es) disponibles en ${data.source}.`;
+    const table = document.createElement("table");
+    table.className = "partition-table";
+    table.innerHTML = "<thead><tr><th>Controlador</th><th>Tipo</th><th>Fabricante</th><th>Fecha</th></tr></thead>";
+    const tbody = document.createElement("tbody");
+    data.updates.forEach((u) => {
+      const tr = document.createElement("tr");
+      [u.title, u.driverClass, u.manufacturer, u.date].forEach((v) => {
+        const td = document.createElement("td");
+        td.textContent = v || "—";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    list.appendChild(table);
+    installBtn.hidden = false;
+  } catch (e) {
+    status.textContent = "No se pudo consultar Windows Update.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function installDrivers() {
+  if (!window.confirm("¿Descargar e instalar todos los controladores encontrados? Puede tardar varios minutos y pedir reiniciar.")) return;
+  const status = document.getElementById("drivers-search-status");
+  const installBtn = document.getElementById("drivers-install-btn");
+  const searchBtn = document.getElementById("drivers-search-btn");
+  installBtn.disabled = true;
+  searchBtn.disabled = true;
+  status.textContent = "Descargando e instalando… no cierres DiagFix.";
+  try {
+    const res = await fetch("/api/drivers/install", { method: "POST" });
+    const data = await res.json();
+    if (data.status === "error" && !data.results) {
+      status.textContent = data.message;
+      return;
+    }
+    const resumen = (data.results || []).map((r) => `${r.title}: ${r.result}`).join(" · ");
+    status.textContent = (data.message || resumen) + (data.reboot_required ? " — Reinicia el equipo para terminar." : "");
+    installBtn.hidden = true;
+  } catch (e) {
+    status.textContent = "No se pudo completar la instalación.";
+  } finally {
+    installBtn.disabled = false;
+    searchBtn.disabled = false;
+  }
+}
+
+document.getElementById("drivers-search-btn").addEventListener("click", searchDrivers);
+document.getElementById("drivers-install-btn").addEventListener("click", installDrivers);
 
 let installedAppsCache = [];
 

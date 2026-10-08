@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DiagFix — Panel de diagnóstico</title>
-<link rel="stylesheet" href="/static/style.css?v=46" />
+<link rel="stylesheet" href="/static/style.css?v=47" />
 </head>
 <body>
   <header class="topbar">
@@ -456,6 +456,21 @@
         </section>
 
         <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Controladores</h2>
+            <button id="drivers-search-btn" class="btn btn-ghost btn-small">Buscar en Windows Update</button>
+            <span id="drivers-search-status" class="status-text"></span>
+          </div>
+          <p class="card-desc">
+            Para después de formatear: busca los controladores que Windows Update tiene para este equipo
+            (lo mismo que Windows esconde en "Actualizaciones opcionales"). Tarda entre 15 y 60 segundos y necesita internet.
+          </p>
+          <p id="drivers-vendor" class="card-desc"></p>
+          <div id="drivers-updates"></div>
+          <button id="drivers-install-btn" class="btn btn-primary btn-small" hidden>Instalar todos</button>
+        </section>
+
+        <section class="card">
           <div class="card-header"><h2 class="card-title">Backup de drivers</h2></div>
           <p class="card-desc">Exporta los drivers de terceros instalados a una carpeta, para reinstalarlos después de formatear. Requiere permisos de administrador.</p>
           <div class="nas-row">
@@ -542,6 +557,6 @@
     <p>Los chequeos marcados como "no disponible" suelen requerir permisos de administrador.</p>
   </footer>
 
-  <script src="/static/script.js?v=46"></script>
+  <script src="/static/script.js?v=47"></script>
 </body>
 </html>
