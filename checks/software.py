@@ -6,7 +6,7 @@ import socket
 import struct
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import date, datetime
 
 from .base import result as _result
 from .base import run as _run
@@ -30,11 +30,47 @@ try {
     $result.lastUpdate = if ($hf) { $hf.ToString('yyyy-MM-dd') } else { $null }
 } catch { $result.lastUpdate = $null }
 
+# Errores del log System. Se descartan fuentes que generan errores en
+# cualquier Windows sano (DCOM, trazas de eventos) y Windows Update, que
+# tiene su propio chequeo. Aparte se cuentan los errores de hardware real
+# (disco, controladora, memoria/CPU vía WHEA) de 7 días: esos sí son graves
+# y son los que se perdían entre el ruido de un conteo total.
+$ruido = 'Microsoft-Windows-DistributedCOM|Microsoft-Windows-Kernel-EventTracing|Microsoft-Windows-WindowsUpdateClient'
+$ntfsSrc = '^(Ntfs|Microsoft-Windows-Ntfs)$'
+$discoSrc = '^(disk|stornvme|storahci|iaStorA|iaStorAC|iaStorAVC|volmgr)$'
 try {
-    $result.eventLogCount = (Get-WinEvent -FilterHashtable @{LogName='System';Level=2;StartTime=(Get-Date).AddHours(-24)} -ErrorAction Stop | Measure-Object).Count
+    $errs = @(Get-WinEvent -FilterHashtable @{LogName='System';Level=2;StartTime=(Get-Date).AddHours(-24)} -ErrorAction Stop |
+        Where-Object { $_.ProviderName -notmatch $ruido -and $_.ProviderName -notmatch $ntfsSrc })
+    $result.eventLogCount = $errs.Count
+    $topSrc = $errs | Group-Object ProviderName | Sort-Object Count -Descending | Select-Object -First 1
+    $result.eventLogTopSource = if ($topSrc) { "$($topSrc.Name) x$($topSrc.Count)" } else { $null }
 } catch {
     if ($_.Exception.Message -match 'No events|No se encontraron') { $result.eventLogCount = 0 } else { $result.eventLogCount = $null }
+    $result.eventLogTopSource = $null
 }
+try {
+    $graves = @(Get-WinEvent -FilterHashtable @{LogName='System';Level=@(1,2);StartTime=(Get-Date).AddDays(-7)} -ErrorAction Stop |
+        Where-Object { $_.ProviderName -match "$ntfsSrc|$discoSrc|^Microsoft-Windows-WHEA-Logger$" })
+} catch { $graves = @() }
+$result.wheaErrors7d = @($graves | Where-Object { $_.ProviderName -eq 'Microsoft-Windows-WHEA-Logger' }).Count
+$disco = @($graves | Where-Object { $_.ProviderName -match $discoSrc })
+$result.diskErrors7d = $disco.Count
+$result.diskErrorSource = if ($disco) { ($disco | Group-Object ProviderName | Sort-Object Count -Descending | Select-Object -First 1).Name } else { $null }
+# Daño del sistema de archivos por unidad: el evento trae la letra
+# (DriveName). Importa si es C: o una unidad externa que ya ni está
+# conectada (un pendrive sacado sin expulsar) — no es lo mismo.
+$sysDrive = $env:SystemDrive.ToUpper()
+$result.fsCorruption = @($graves | Where-Object { $_.ProviderName -match $ntfsSrc } | ForEach-Object {
+        $d = ([xml]$_.ToXml()).Event.EventData.Data | Where-Object { $_.Name -eq 'DriveName' } | Select-Object -First 1
+        if ($d -and $d.'#text') { ([string]$d.'#text').ToUpper() }
+    } | Group-Object | ForEach-Object {
+        [ordered]@{
+            drive    = $_.Name
+            count    = $_.Count
+            isSystem = ($_.Name -eq $sysDrive)
+            present  = [bool](Get-Volume -DriveLetter $_.Name.TrimEnd(':') -ErrorAction SilentlyContinue)
+        }
+    })
 
 $dumps = Get-ChildItem -Path "$env:SystemRoot\Minidump" -Filter *.dmp -ErrorAction SilentlyContinue
 $result.dumps30d = if ($dumps) { @($dumps | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) }).Count } else { 0 }
@@ -51,13 +87,21 @@ $result.spoolerStatus = [string](Get-Service -Name Spooler -ErrorAction Silently
 # Actualizaciones que FALLARON al instalarse (evento 20 de WindowsUpdateClient).
 # Un equipo que intenta actualizar y falla se ve igual de sano que uno al día
 # si solo se mira la fecha del último parche exitoso.
+# El evento 20 también registra las apps de la Microsoft Store que no se
+# pudieron actualizar (típicamente porque estaban abiertas: 0x80073D02). Esas
+# no son fallas de Windows Update y se arreglan solas; se descartan por el
+# título, que en las apps de la Store es el ID de producto (9 + 11
+# caracteres) — no depende del idioma del sistema.
 try {
-    $fallidos = @(Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-WindowsUpdateClient';Id=20;StartTime=(Get-Date).AddDays(-30)} -ErrorAction Stop)
+    $fallidos = @(Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-WindowsUpdateClient';Id=20;StartTime=(Get-Date).AddDays(-30)} -ErrorAction Stop |
+        Where-Object { [string]$_.Properties[1].Value -notmatch '^9[A-Z0-9]{11}-' })
     $result.failedUpdates30d = $fallidos.Count
     $result.failedUpdateSample = if ($fallidos) { $fallidos[0].Message } else { $null }
+    $result.failedUpdateTitle = if ($fallidos) { [string]$fallidos[0].Properties[1].Value } else { $null }
 } catch {
     $result.failedUpdates30d = 0
     $result.failedUpdateSample = $null
+    $result.failedUpdateTitle = $null
 }
 
 # Servicios importantes que deberían estar corriendo y no lo están. Se
@@ -94,8 +138,18 @@ $result.topFailingAppCount = if ($top) { $top.Count } else { 0 }
 $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
 $result.osCaption = [string]$os.Caption
 $result.osBuild = [int]$os.BuildNumber
-$result.esuActive = @(Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
-    Where-Object { ($_.Name -like '*ESU*' -or $_.Description -like '*Extended Security*') -and $_.LicenseStatus -eq 1 }).Count -gt 0
+# ESU por ID de activación (publicados por Microsoft, iguales en todas las
+# ediciones y sin depender del idioma): año 1 cubre hasta el 13-10-2026,
+# años 2 y 3 son solo para empresas con licenciamiento por volumen.
+$esuIds = @{
+    'f520e45e-7413-4a34-a497-d2765967d094' = 1
+    '1043add5-23b1-4afb-9a0f-64343c8f3f8d' = 2
+    '83d49986-add3-41d7-ba33-87c7bfb5c0fb' = 3
+}
+$esu = @(Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
+    Where-Object { $_.LicenseStatus -eq 1 -and ($esuIds.ContainsKey(([string]$_.ID).ToLower()) -or $_.Name -like '*ESU*' -or $_.Description -like '*Extended Security*') })
+$result.esuActive = $esu.Count -gt 0
+$result.esuMaxYear = ($esu | ForEach-Object { $y = $esuIds[([string]$_.ID).ToLower()]; if ($y) { $y } else { 1 } } | Measure-Object -Maximum).Maximum
 
 $result | ConvertTo-Json -Compress -Depth 4
 """.strip()
@@ -302,20 +356,75 @@ def check_event_log_errors(batch=None):
     if count is None:
         return _result("Errores en el registro de eventos (24h)", "unknown", None,
                         "No se pudo consultar el registro de eventos (puede requerir permisos de administrador).")
-    causes = ["Driver con fallas o desactualizado", "Un servicio que falla al iniciar", "Hardware con problemas intermitentes", "Archivos de sistema corruptos"]
-    fix = [
-        "Abre el Visor de Eventos (eventvwr.msc) y revisa el detalle de los errores más frecuentes.",
-        "Actualiza los drivers desde el Administrador de dispositivos o el sitio del fabricante.",
-        "Ejecuta `sfc /scannow` para revisar archivos de sistema (usa el botón de verificación profunda de este panel).",
-    ]
+    b = batch or {}
+    name = "Errores en el registro de eventos (24h)"
+    top_source = b.get("eventLogTopSource")
+    whea = b.get("wheaErrors7d") or 0
+    disk_errors = b.get("diskErrors7d") or 0
+    fs = b.get("fsCorruption") or []
+    if isinstance(fs, dict):
+        fs = [fs]
+    fs_system = [f for f in fs if f.get("isSystem")]
+    fs_other_present = [f for f in fs if not f.get("isSystem") and f.get("present")]
+    fs_gone = [f for f in fs if not f.get("isSystem") and not f.get("present")]
+
+    # WHEA = errores reportados por el propio CPU/RAM/placa: hardware
+    # interno, no hay ambigüedad de "a qué disco se refiere".
+    if whea:
+        return _result(
+            name, "critical", f"{whea} errores de hardware WHEA (7d)",
+            "El procesador, la memoria o la placa reportaron errores de hardware.",
+            causes=["Memoria RAM fallando o mal asentada", "Sobrecalentamiento del CPU", "Overclock/XMP inestable o fuente de poder insuficiente"],
+            fix=[
+                "Prueba la RAM (Diagnóstico de memoria de Windows: mdsched) y reasiéntala.",
+                "Revisa temperaturas con la prueba de estrés de la pestaña Pruebas.",
+                "Si hay XMP/overclock activo en la BIOS, desactívalo y vuelve a probar.",
+            ],
+        )
+    if fs_system:
+        f = fs_system[0]
+        return _result(
+            name, "critical", f"Daño en el sistema de archivos de {f['drive']} ({f['count']} eventos, 7d)",
+            f"Windows detectó estructuras dañadas en el sistema de archivos de {f['drive']}, la unidad del sistema.",
+            causes=["Apagones o cortes de energía con el equipo escribiendo", "Disco empezando a fallar", "Apagado forzado (botón) repetido"],
+            fix=[
+                "Respalda los datos importantes.",
+                f"Ejecuta un escaneo del disco (botón abajo); si encuentra errores, programa `chkdsk {f['drive']} /f` para el próximo reinicio.",
+                "Revisa el estado S.M.A.R.T. del disco en la pestaña Discos.",
+            ],
+            action_id="chkdsk_scan",
+        )
+
+    avisos = []
+    if disk_errors:
+        avisos.append(f"{disk_errors} errores de disco/controladora (7d, {b.get('diskErrorSource')})")
+    for f in fs_other_present:
+        avisos.append(f"daño en el sistema de archivos de {f['drive']}")
+    if avisos:
+        return _result(
+            name, "warning", "; ".join(avisos),
+            "Hay errores de disco o de sistema de archivos en una unidad que no es la del sistema.",
+            causes=["Disco externo o pendrive desconectado sin expulsar", "Disco secundario empezando a fallar", "Cable o puerto USB defectuoso"],
+            fix=[
+                "Si es un disco externo o pendrive, revísalo con `chkdsk <letra>: /f` y respalda lo importante.",
+                "Si es un disco interno, revisa su S.M.A.R.T. en la pestaña Discos.",
+            ],
+        )
+
+    value = f"{count}" + (f" — más frecuente: {top_source}" if top_source and count else "")
+    if fs_gone:
+        value += " · daño en " + ", ".join(f["drive"] for f in fs_gone) + " (unidad ya desconectada)"
+    # Sin errores de hardware, un conteo alto suele ser un servicio o driver
+    # que reintenta en bucle: vale revisarlo (la fuente ya está en el valor),
+    # pero no es crítico ni se arregla con una reparación general de Windows.
     if count > 20:
-        return _result("Errores en el registro de eventos (24h)", "critical", str(count),
-                        "Cantidad alta de errores del sistema.", causes=causes, fix=fix,
-                        action_id="dism_restore_health")
-    if count > 5:
-        return _result("Errores en el registro de eventos (24h)", "warning", str(count),
-                        "Se registraron varios errores del sistema recientes.", causes=causes, fix=fix)
-    return _result("Errores en el registro de eventos (24h)", "ok", str(count), "Pocos o ningún error reciente.")
+        return _result(
+            "Errores en el registro de eventos (24h)", "warning", value,
+            "Hay un componente generando muchos errores del sistema.",
+            causes=["Un servicio o driver que falla y reintenta en bucle", "Un programa de terceros mal instalado"],
+            fix=["Abre el Visor de Eventos (eventvwr.msc), filtra el log Sistema por la fuente indicada y revisa el mensaje."],
+        )
+    return _result("Errores en el registro de eventos (24h)", "ok", value, "Sin errores de hardware ni errores repetidos del sistema.")
 
 
 def check_startup_items():
@@ -511,6 +620,15 @@ def check_error_devices(batch=None):
     )
 
 
+# Último día cubierto por cada año de ESU de Windows 10 (Microsoft). El año 1
+# es el único disponible para consumidores; 2 y 3 son solo para empresas.
+_ESU_YEAR_ENDS = {
+    1: date(2026, 10, 13),
+    2: date(2027, 10, 12),
+    3: date(2028, 10, 10),
+}
+
+
 def check_os_support(batch=None):
     """Si el sistema operativo sigue recibiendo parches de seguridad.
 
@@ -536,11 +654,25 @@ def check_os_support(batch=None):
         "Si no es compatible, la única cobertura son las actualizaciones extendidas (ESU) o reemplazar el equipo.",
     ]
     if (batch or {}).get("esuActive"):
+        year = (batch or {}).get("esuMaxYear") or 1
+        ends = _ESU_YEAR_ENDS.get(year, _ESU_YEAR_ENDS[1])
+        days_left = (ends - datetime.now().date()).days
+        fin = ends.strftime("%d-%m-%Y")
+        if days_left < 0:
+            return _result(
+                "Soporte de Windows", "critical", f"{caption} — ESU año {year} vencido",
+                f"Las actualizaciones extendidas (ESU) de este equipo vencieron el {fin}: ya no recibe parches de seguridad.",
+                causes=[
+                    "El ESU para consumidores terminó el 13-10-2026 y no tiene año 2",
+                    "En empresas, no se activó la licencia ESU del año siguiente",
+                ],
+                fix=fix_upgrade + ["En equipos de empresa con licenciamiento por volumen, se puede activar el ESU del año 2 (hasta el 12-10-2027)."],
+            )
         return _result(
-            "Soporte de Windows", "warning", f"{caption} con ESU activo",
-            "Windows 10 ya no tiene soporte estándar, pero este equipo tiene actualizaciones extendidas (ESU) activas.",
+            "Soporte de Windows", "warning", f"{caption} — ESU año {year} hasta el {fin} ({days_left} días)",
+            "Windows 10 ya no tiene soporte estándar; este equipo depende de actualizaciones extendidas (ESU) con fecha de término.",
             causes=["Windows 10 dejó de recibir parches el 14-10-2025"],
-            fix=["El primer año de ESU vence el 13-10-2026: planifica la actualización o la renovación antes de esa fecha."] + fix_upgrade,
+            fix=[f"Planifica la actualización a Windows 11 o el reemplazo antes del {fin}."] + fix_upgrade,
         )
     return _result(
         "Soporte de Windows", "critical", f"{caption} sin ESU",
@@ -574,6 +706,10 @@ def check_failed_updates(batch=None):
     match = re.search(r"(0x[0-9A-Fa-f]{8})", muestra)
     if match:
         codigo = f" (código {match.group(1)})"
+    titulo = (batch.get("failedUpdateTitle") or "").strip()
+    kb = re.search(r"KB\d{6,8}", titulo)
+    if kb:
+        codigo = f" — {kb.group(0)}{codigo}"
     causes = [
         "Componentes de Windows Update dañados o con la caché corrupta",
         "Espacio insuficiente en disco para instalar la actualización",
@@ -638,6 +774,11 @@ def check_app_crashes(batch=None):
     detalle = f"{cierres} cierres, {cuelgues} cuelgues (30d)"
     if top:
         detalle += f" — la que más falla: {top} x{top_n}"
+    # Algún cierre suelto en 30 días pasa en casi cualquier equipo; lo que
+    # vale la pena atender es una misma app fallando una y otra vez.
+    if top_n < 3 and total <= 20:
+        return _result("Aplicaciones que fallan", "ok", detalle,
+                        "Solo cierres aislados, ninguna aplicación falla de forma repetida.")
     causes = [
         "La aplicación está desactualizada o su instalación quedó dañada",
         "Falta de memoria RAM cuando la aplicación se usa junto con otras",

@@ -102,15 +102,31 @@ def check_internet():
     return _result("Conexión a Internet", "ok", value, "Conexión estable.")
 
 
+_DNS_HOSTS = ("www.google.com", "www.microsoft.com", "www.cloudflare.com")
+
+
 def check_dns():
-    """Resuelve un dominio conocido para confirmar que la resolución DNS funciona."""
-    host = "www.google.com"
-    start = time.time()
-    try:
-        socket.setdefaulttimeout(TIMEOUT)
-        socket.gethostbyname(host)
-        elapsed = round((time.time() - start) * 1000)
-    except socket.gaierror:
+    """Resuelve dominios conocidos para confirmar que la resolución DNS
+    funciona y no es lenta.
+
+    Se miden tres dominios distintos y se toma el mejor tiempo: una sola
+    consulta coincidía con el arranque de los ~20 procesos del escaneo y
+    daba "DNS lento" falso (medido: 0-9 ms sola vs 875 ms dentro del
+    escaneo). Un DNS lento de verdad es lento en las tres consultas; un pico
+    de carga del propio escaneo afecta como mucho a una."""
+    socket.setdefaulttimeout(TIMEOUT)
+    times = []
+    failed = 0
+    for host in _DNS_HOSTS:
+        start = time.time()
+        try:
+            socket.gethostbyname(host)
+            times.append(round((time.time() - start) * 1000))
+        except socket.gaierror:
+            failed += 1
+        except Exception:
+            pass
+    if failed == len(_DNS_HOSTS):
         return _result(
             "Resolución DNS", "critical", "Falla",
             "No se pudo resolver nombres de dominio.",
@@ -126,8 +142,9 @@ def check_dns():
             ],
             action_id="flush_dns",
         )
-    except Exception:
+    if not times:
         return _result("Resolución DNS", "unknown", None, "No se pudo comprobar la resolución DNS.")
+    elapsed = min(times)
     if elapsed > 300:
         return _result(
             "Resolución DNS", "warning", f"{elapsed} ms", "El DNS responde lento.",
@@ -315,34 +332,57 @@ def check_link_speed():
     return _result("Velocidad del enlace de red", "ok", value, "El enlace negoció a una velocidad normal.")
 
 
+_PROFILE_SCRIPT = r"""
+[ordered]@{
+    categories = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.NetworkCategory })
+    domain     = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).PartOfDomain
+} | ConvertTo-Json -Compress
+""".strip()
+
+
 def check_network_profile():
-    """Perfil de red (Público/Privado). En Público, Windows bloquea el
-    descubrimiento de red: no se ven las carpetas ni las impresoras
-    compartidas. Es una causa clásica de "no me aparece la impresora"."""
+    """Perfil de red (Público/Privado/Dominio).
+
+    "Público" por sí solo no es un problema — es lo recomendado en redes no
+    confiables, y antes se marcaba como alerta en cualquier notebook en una
+    casa o un café. El caso que sí es una falla real es un equipo del
+    dominio que NO reconoce la red como "Dominio": ahí el firewall le aplica
+    reglas de red pública y fallan unidades de red, impresoras y directivas
+    aunque el equipo esté enchufado en la oficina."""
     if platform.system() != "Windows":
         return _result("Perfil de red", "unknown", None, "Chequeo disponible solo en Windows.")
-    output = _run_powershell(
-        "Get-NetConnectionProfile -ErrorAction SilentlyContinue | "
-        "Select-Object -First 1 -ExpandProperty NetworkCategory",
-        timeout=20,
-    )
-    profile = (output or "").strip()
-    if not profile:
+    output = _run_powershell(_PROFILE_SCRIPT, timeout=20)
+    try:
+        data = json.loads(output) if output else {}
+    except (json.JSONDecodeError, ValueError):
+        data = {}
+    categories = data.get("categories") or []
+    if isinstance(categories, str):
+        categories = [categories]
+    if not categories:
         return _result("Perfil de red", "unknown", None, "No se pudo leer el perfil de la red activa.")
     etiquetas = {"Public": "Público", "Private": "Privado", "DomainAuthenticated": "Dominio"}
-    legible = etiquetas.get(profile, profile)
-    if profile == "Public":
+    legible = ", ".join(etiquetas.get(c, c) for c in categories)
+
+    if data.get("domain") and "DomainAuthenticated" not in categories:
         return _result(
             "Perfil de red", "warning", legible,
-            "La red está marcada como Pública: Windows bloquea el descubrimiento de red.",
+            "Equipo del dominio que no reconoce la red como red del dominio: unidades de red, impresoras y directivas pueden fallar.",
             causes=[
-                "Al conectarse a la red se eligió 'No' en la pregunta de si el equipo debe ser detectable",
-                "La red se agregó como pública por defecto",
+                "El equipo no está en la red de la oficina (en casa o fuera es normal)",
+                "El servicio de reconocimiento de red (NLA) detectó la red antes de que el controlador de dominio respondiera",
+                "Problema de DNS: el equipo no encuentra el controlador de dominio",
             ],
             fix=[
-                "Ve a Configuración > Red e Internet, abre la red conectada y cámbiala a 'Red privada'.",
-                "Con la red en Privada vuelven a verse las carpetas y las impresoras compartidas.",
+                "Si está en la oficina, desconecta y vuelve a conectar la red (o reinicia el servicio 'Reconocimiento de ubicación de red').",
+                "Verifica que el DNS configurado sea el de la empresa (chequeo 'Configuración de red').",
+                "Si persiste, ejecuta `gpupdate /force` y reinicia el equipo.",
             ],
+        )
+    if "Public" in categories:
+        return _result(
+            "Perfil de red", "ok", legible,
+            "Red marcada como Pública (lo recomendado en redes no confiables). Si el usuario necesita ver impresoras o carpetas compartidas de esa red, cámbiala a Privada.",
         )
     return _result("Perfil de red", "ok", legible, "La red permite el descubrimiento de equipos y recursos compartidos.")
 
@@ -361,20 +401,41 @@ def check_internet_speed():
 
     from .base import windows_ssl_context as _ssl_context
 
-    # Cloudflare responde 403 al user-agent por defecto de urllib.
-    peticion = urllib.request.Request(_SPEED_URL, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-    try:
-        start = time.perf_counter()
-        with urllib.request.urlopen(peticion, timeout=15, context=_ssl_context()) as resp:
+    # El cronómetro corre solo durante la transferencia del cuerpo: antes
+    # incluía armar el contexto TLS (carga cientos de certificados de
+    # Windows), DNS, conexión y handshake — bajo la carga del propio escaneo
+    # eso sumaba >1s a una descarga de ~0.5s y una conexión de ~78 Mbps
+    # salía en 15 Mbps "lenta".
+    ctx = _ssl_context()
+
+    def medir():
+        # Cloudflare responde 403 al user-agent por defecto de urllib.
+        peticion = urllib.request.Request(_SPEED_URL, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        with urllib.request.urlopen(peticion, timeout=15, context=ctx) as resp:
+            start = time.perf_counter()
             downloaded = len(resp.read())
-        elapsed = time.perf_counter() - start
+            elapsed = time.perf_counter() - start
+        if elapsed <= 0 or downloaded < _SPEED_BYTES / 2:
+            return None
+        return round((downloaded * 8) / elapsed / 1_000_000, 1)
+
+    try:
+        mbps = medir()
     except Exception:
         return _result("Velocidad de descarga", "unknown", None,
                        "No se pudo medir (sin salida a internet, proxy o firewall bloqueando).")
-    if elapsed <= 0 or downloaded < _SPEED_BYTES / 2:
+    # Descifrar TLS compite por CPU con los procesos del escaneo: si la
+    # primera medición sale baja se repite una vez, pasado el pico, y se
+    # toma la mejor. Una conexión lenta de verdad sale lenta las dos veces.
+    if mbps is not None and mbps < 20:
+        time.sleep(2)
+        try:
+            mbps = max(mbps, medir() or 0)
+        except Exception:
+            pass
+    if mbps is None:
         return _result("Velocidad de descarga", "unknown", None, "La medición no se completó.")
 
-    mbps = round((downloaded * 8) / elapsed / 1_000_000, 1)
     value = f"{mbps} Mbps"
     causes = [
         "Saturación de la red (otros equipos descargando o actualizándose)",

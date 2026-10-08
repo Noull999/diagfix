@@ -434,22 +434,68 @@ def check_ram():
     return _result("Memoria RAM", "ok", f"{mem.percent}%", "Uso de memoria normal.")
 
 
+def _own_process_tree():
+    me = psutil.Process()
+    pids = {me.pid}
+    try:
+        pids |= {c.pid for c in me.children(recursive=True)}
+    except psutil.Error:
+        pass
+    return pids
+
+
 def check_cpu():
-    """Revisa la carga actual del procesador (muestra de 1 segundo)."""
+    """Carga de CPU de los programas del equipo, sin contar a DiagFix.
+
+    El escaneo lanza ~20 procesos de PowerShell en paralelo, justo durante
+    el segundo en que se mide: medir el CPU total daba 95% "crítico" en
+    cualquier equipo (medido: 4-9% en reposo vs 95% dentro del escaneo).
+    Se mide por proceso y se excluye el árbol propio; los procesos que
+    nacen durante la muestra (los PowerShell del escaneo) no se cuentan
+    porque no existían al empezar. Además así se puede nombrar al que más
+    consume, que es lo que el técnico necesita saber."""
     if psutil is None:
         return _result("Uso de CPU", "unknown", None, "Falta el paquete psutil.")
-    percent = psutil.cpu_percent(interval=1)
-    causes = ["Proceso específico consumiendo CPU (actualización, indexación, malware)", "Sobrecalentamiento causando throttling", "Virus o minero de criptomonedas oculto"]
+    cores = psutil.cpu_count() or 1
+    ours = _own_process_tree()
+    procs = []
+    for p in psutil.process_iter(["name"]):
+        if p.pid in ours or p.pid == 0:
+            continue
+        try:
+            p.cpu_percent(None)
+            procs.append(p)
+        except psutil.Error:
+            continue
+    time.sleep(1)
+    ours |= _own_process_tree()
+    usage = []
+    for p in procs:
+        if p.pid in ours:
+            continue
+        try:
+            usage.append((p.cpu_percent(None) / cores, p.info["name"] or "?"))
+        except psutil.Error:
+            continue
+    percent = round(min(sum(u for u, _ in usage), 100), 1)
+    usage.sort(reverse=True)
+    top_pct, top_name = usage[0] if usage else (0, None)
+    value = f"{percent}%"
+    if top_name and top_pct >= 10:
+        value += f" — {top_name} {round(top_pct)}%"
+
+    causes = ["Proceso específico consumiendo CPU (actualización, indexación, antivirus escaneando)", "Sobrecalentamiento causando throttling", "Malware o minero de criptomonedas oculto (si el proceso es desconocido)"]
     fix = [
-        "Abre el Administrador de tareas y ordena por uso de CPU para identificar el proceso.",
+        f"Revisa en el Administrador de tareas qué está haciendo {top_name}." if top_name and top_pct >= 10
+        else "Abre el Administrador de tareas y ordena por uso de CPU para identificar el proceso.",
         "Si el proceso es desconocido o sospechoso, ejecuta un análisis con el antivirus.",
         "Revisa que los ventiladores no estén tapados con polvo (sobrecalentamiento reduce el rendimiento).",
     ]
     if percent > 90:
-        return _result("Uso de CPU", "critical", f"{percent}%", "CPU saturada.", causes=causes, fix=fix)
+        return _result("Uso de CPU", "critical", value, "CPU saturada por los programas del equipo.", causes=causes, fix=fix)
     if percent > 70:
-        return _result("Uso de CPU", "warning", f"{percent}%", "Carga de CPU alta.", causes=causes, fix=fix)
-    return _result("Uso de CPU", "ok", f"{percent}%", "Carga de CPU normal.")
+        return _result("Uso de CPU", "warning", value, "Carga de CPU alta.", causes=causes, fix=fix)
+    return _result("Uso de CPU", "ok", value, "Carga de CPU normal.")
 
 
 _TEMP_SCRIPT = r"""
@@ -612,9 +658,12 @@ def check_reliability_index(batch=None):
     value = f"{round(index, 1)}/10"
     causes = ["Crasheos o cierres inesperados de programas recientes", "Instalaciones o desinstalaciones fallidas", "Drivers que fallan al cargar"]
     fix = ["Abre el Monitor de confiabilidad (perfmon /rel) para ver el detalle día por día de qué generó cada baja."]
-    if index < 4:
+    # Umbrales bajos a propósito: un equipo de uso normal ronda 5-8 (cualquier
+    # cierre de app ya lo baja), y esos cierres ya los reporta "Aplicaciones
+    # que fallan" con el nombre de la app — alertar desde 7 repetía lo mismo.
+    if index < 3:
         return _result("Índice de estabilidad de Windows", "critical", value, "El sistema muestra inestabilidad importante en los últimos días.", causes=causes, fix=fix)
-    if index < 7:
+    if index < 5:
         return _result("Índice de estabilidad de Windows", "warning", value, "El sistema muestra cierta inestabilidad reciente.", causes=causes, fix=fix)
     return _result("Índice de estabilidad de Windows", "ok", value, "El sistema se muestra estable.")
 
