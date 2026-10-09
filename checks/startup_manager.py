@@ -61,6 +61,41 @@ def _save_disabled_registry_backup(data):
         pass
 
 
+# Sufijo que usaba la primera versión de este módulo, que "deshabilitaba"
+# renombrando el valor del registro. Eso nunca funcionó (Windows ejecuta
+# todos los valores de la clave Run, sin importar el nombre), así que esas
+# entradas siguen arrancando — y la versión nueva ya no las reconocía como
+# deshabilitadas. Se migran al mecanismo actual (eliminar + respaldo).
+_LEGACY_SUFFIX = "__DiagFixDisabled"
+
+
+def _migrate_legacy_entries():
+    backup = _load_disabled_registry_backup()
+    changed = False
+    for hive_label, hive, path in _RUN_PATHS:
+        try:
+            with winreg.OpenKey(hive, path, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+                legacy = []
+                i = 0
+                while True:
+                    try:
+                        name, value, value_type = winreg.EnumValue(key, i)
+                    except OSError:
+                        break
+                    i += 1
+                    if name.endswith(_LEGACY_SUFFIX):
+                        legacy.append((name, value, value_type))
+                for name, value, value_type in legacy:
+                    original = name[: -len(_LEGACY_SUFFIX)]
+                    backup.setdefault(f"{hive_label}|{original}", {"value": value, "type": value_type})
+                    winreg.DeleteValue(key, name)
+                    changed = True
+        except OSError:
+            continue
+    if changed:
+        _save_disabled_registry_backup(backup)
+
+
 def _startup_folders():
     paths = []
     appdata = os.environ.get("APPDATA")
@@ -73,6 +108,7 @@ def _startup_folders():
 
 
 def list_items():
+    _migrate_legacy_entries()
     items = []
     seen_reg_ids = set()
 
