@@ -435,20 +435,17 @@ def check_event_log_errors(batch=None):
 
 
 def check_startup_items():
-    """Cuenta los programas configurados para iniciar junto con Windows."""
+    """Cuenta los programas que realmente arrancan con Windows: misma fuente
+    que la pestaña Sistema, sin contar los deshabilitados (antes se contaban
+    todos los valores del registro, deshabilitados incluidos)."""
     if platform.system() != "Windows":
         return _result("Programas de inicio", "unknown", None, "Chequeo disponible solo en Windows.")
-    total = 0
-    paths = [
-        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run"),
-    ]
-    for hive, path in paths:
-        try:
-            with winreg.OpenKey(hive, path) as key:
-                total += winreg.QueryInfoKey(key)[1]
-        except Exception:
-            continue
+    from .startup_manager import list_items
+
+    try:
+        total = sum(1 for item in list_items() if item["enabled"])
+    except Exception:
+        return _result("Programas de inicio", "unknown", None, "No se pudo leer la lista de programas de inicio.")
     if total > 15:
         return _result(
             "Programas de inicio", "warning", str(total),
