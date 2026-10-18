@@ -375,8 +375,8 @@ main {
 .status-warning .dot { background: var(--warn); }
 .status-critical .dot, .status-error .dot { background: var(--critical); }
 
-.check-name { flex: 1; font-size: 13.5px; min-width: 0; }
-.check-value { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.check-name { flex: 1; font-size: 13.5px; min-width: 11em; }
+.check-value { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); text-align: right; overflow-wrap: anywhere; }
 .status-ok .check-value { color: var(--ok); }
 .status-warning .check-value { color: var(--warn); }
 .status-critical .check-value, .status-error .check-value { color: var(--critical); }
