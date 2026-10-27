@@ -1,3 +1,26 @@
+// Va primero a propósito: si algo más abajo falla en un equipo (navegador
+// distinto, un dato inesperado), un error corta el resto del archivo y los
+// botones definidos después nunca se conectan. Navegar tiene que funcionar
+// siempre, y el error se muestra en pantalla en vez de quedar escondido en
+// una consola que nadie abre en terreno.
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+});
+
+function mostrarErrorDeScript(texto) {
+  let banner = document.getElementById("script-error-banner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "script-error-banner";
+    banner.style.cssText = "position:fixed;bottom:0;left:0;right:0;z-index:100000;background:#7a1620;color:#fff;" +
+      "padding:8px 14px;font:12px/1.4 monospace;max-height:30vh;overflow:auto;white-space:pre-wrap";
+    document.body.appendChild(banner);
+  }
+  banner.textContent = `Error en DiagFix (mándale esto al soporte): ${texto}\n` + banner.textContent.split("\n").slice(1, 4).join("\n");
+}
+window.addEventListener("error", (e) => mostrarErrorDeScript(`${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`));
+window.addEventListener("unhandledrejection", (e) => mostrarErrorDeScript(String((e.reason && e.reason.message) || e.reason)));
+
 function switchTab(tabId) {
   document.querySelectorAll(".tab-panel").forEach((panel) => {
     panel.hidden = panel.id !== tabId;
@@ -2251,9 +2274,6 @@ document.getElementById("visit-technician").addEventListener("change", handleTec
 document.getElementById("nas-save-path-btn").addEventListener("click", saveNasPath);
 document.getElementById("nas-credentials-btn").addEventListener("click", openNasCredentialsForm);
 document.getElementById("nas-upload-btn").addEventListener("click", uploadReportToNas);
-document.querySelectorAll(".tab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
-});
 
 // ---- Garantía ----
 // Va a pedido y no al cargar la ficha: manda el número de serie del equipo
